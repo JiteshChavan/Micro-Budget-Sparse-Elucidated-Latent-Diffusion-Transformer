@@ -136,3 +136,78 @@ class UniversalTokenizer:
             tokenized_caption = self.tokenizer( captions, padding='max_length', max_length=self.tokenizer.model_max_length, truncation=True, return_tensors='pt')
             return {'input_idx': tokenized_caption['input_ids']}
         
+class UniversalTextEncoder(nn.Module):
+    """Universal text encoder supporting multiple model types.
+    
+    Args:
+        name (str): Name/path of the model to load
+        dtype (str): Data type of model weights
+        pretrained (bool, True): wheter to load pretrained weights
+    """
+    def __init__(self, name, weights_dtype, pretrained=True):
+        super().__init__()
+        self.name = name
+        if self.name.startswith("openclip:"):
+            assert pretrained, f"load default pretrained model from openclip"
+            self.encoder = openclip_text_encoder(
+                open_clip.create_model_and_transforms(name.lstrip('openclip:'))[0],
+                torch_dtype= DATA_TYPES[weights_dtype]
+            )
+        elif self.name == "DeepFloyd/t5-v1_1-xxl":
+            self.encoder = T5EncoderModel.from_pretrained (
+                name,
+                torch_dtype=DATA_TYPES[weights_dtype],
+                pretrained = pretrained
+            )
+        else:
+            self.encoder = CLIPTextModel.from_pretrained (
+                name,
+                subfolder='text_encoder',
+                torch_dtype=DATA_TYPES[weights_dtype],
+                pretrained=pretrained
+            )
+    
+    def encode (self, tokenized_caption: torch.Tensor, attention_mask=None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        if self.name == "DeepFloyd/t5-v1_1-xxl":
+            out = self.encoder(tokenized_caption, attention_mask=attention_mask)['last_hidden_state']
+            out = out.unsqueeze(dim=1)
+            return out, None
+        else:
+            return self.encoder(tokenized_caption)
+
+
+class openclip_text_encoder (nn.Module):
+    """OpenCLIP text encoder abstraction
+    
+    Args:
+        clip_model (Any): OpenCLIP model instance
+        weights_dtype (torch.dtype, torch.float32): Data type for model weights
+    """
+
+    def __init__ (self, clip_model, weights_dtype=torch.float32, **kwargs):
+        super().__init__()
+        self.clip_model = clip_model
+        
+        # TODO: inspect later
+        self.device = None
+        self.weights_dtype = weights_dtype
+
+    def forward_fn (self, text: torch.Tensor)-> Tuple[torch.Tensor, None]:
+        cast_dtype = self.clip_model.transformer.get_cast_dtype()
+        x = self.clip_model.token_embedding (text).to(cast_dtype) # (B, T, C)
+        # context length is constant as seq_length as seen in one of the functions above (77)
+        # dont need to torch.arange (0, len(x)).to(dtype).to(device)
+        x = x + self.clip_model.positional_embedding.to(cast_dtype)
+        # No other option but to follow HF convention
+        # Sucks!
+        x = x.permute(1, 0, 2) # B, T, C -> T, B, C
+        x = self.clip_model.transformer (x, attn_mask=self.clip_model.attn_mask)
+        x = x.permute (1, 0, 2) # T, B, C -> B, T, C
+        x = self.clip_model.ln_final(x) # (B, T, C)
+        x = x.unsqueeze (dim=1) # (B, 1, T, C) expected for text_emb
+        return x, None # HF encoders expect to return multiple values with first being text_emb
+    
+    def forward (self, text, **kwargs)-> Tuple[torch.Tensor, None]:
+        with torch.autocast(device_type='cuda', dtype=self.weights_dtype):
+            return self.forward_fn(text)
+

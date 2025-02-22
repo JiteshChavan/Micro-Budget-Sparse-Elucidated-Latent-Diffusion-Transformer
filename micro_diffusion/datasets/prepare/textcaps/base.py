@@ -50,7 +50,7 @@ class StreamingTextcapsDatasetForPreCompute(StreamingDataset):
         ret['sample'] = sample
         return ret
 
-def build_streaming_texcaps_precompute_dataloader (
+def build_streaming_textcaps_precompute_dataloader (
         datadir : Union[list[str], str],
         batch_size : int,
         resize_sizes : Optional[List[int]] = None,
