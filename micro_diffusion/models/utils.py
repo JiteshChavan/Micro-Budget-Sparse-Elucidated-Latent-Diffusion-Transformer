@@ -127,14 +127,14 @@ class UniversalTokenizer:
         which marks padded tokens with 0s"""
         if self.name == "DeepFloyd/t5-v1_1-xxl":
             text_tokens_and_mask = self.tokenizer(captions, padding='max_length', max_length=self.model_max_length, truncation=True, return_attention_mask=True, add_special_tokens=True, return_tensors='pt')
-            mask_and_tokens = {'input_idx': text_tokens_and_mask['input_ids'], 'attention_mask': text_tokens_and_mask['attention_mask']}
+            mask_and_tokens = {'caption_idx': text_tokens_and_mask['input_ids'], 'attention_mask': text_tokens_and_mask['attention_mask']}
             return mask_and_tokens
         
         else:
             # Avoid attention mask for CLIP tokenizers as they are not used
             # the calls usually return a dictionary
             tokenized_caption = self.tokenizer( captions, padding='max_length', max_length=self.tokenizer.model_max_length, truncation=True, return_tensors='pt')
-            return {'input_idx': tokenized_caption['input_ids']}
+            return {'caption_idx': tokenized_caption['caption_idx']}
         
 class UniversalTextEncoder(nn.Module):
     """Universal text encoder supporting multiple model types.
@@ -192,9 +192,9 @@ class openclip_text_encoder (nn.Module):
         self.device = None
         self.weights_dtype = weights_dtype
 
-    def forward_fn (self, text: torch.Tensor)-> Tuple[torch.Tensor, None]:
+    def forward_fn (self, caption_idx: torch.Tensor)-> Tuple[torch.Tensor, None]:
         cast_dtype = self.clip_model.transformer.get_cast_dtype()
-        x = self.clip_model.token_embedding (text).to(cast_dtype) # (B, T, C)
+        x = self.clip_model.token_embedding (caption_idx).to(cast_dtype) # (B, T, C)
         # context length is constant as seq_length as seen in one of the functions above (77)
         # dont need to torch.arange (0, len(x)).to(dtype).to(device)
         x = x + self.clip_model.positional_embedding.to(cast_dtype)
@@ -207,7 +207,8 @@ class openclip_text_encoder (nn.Module):
         x = x.unsqueeze (dim=1) # (B, 1, T, C) expected for text_emb
         return x, None # HF encoders expect to return multiple values with first being text_emb
     
-    def forward (self, text, **kwargs)-> Tuple[torch.Tensor, None]:
+    # eats tokens to give latent clip representation
+    def forward (self, caption_idx, **kwargs)-> Tuple[torch.Tensor, None]:
         with torch.autocast(device_type='cuda', dtype=self.weights_dtype):
-            return self.forward_fn(text)
+            return self.forward_fn(caption_idx)
 

@@ -35,7 +35,7 @@ class StreamingTextcapsDatasetForPreCompute(StreamingDataset):
 
         out = self.tokenizer.tokenize(sample[self.caption_key])
         # TODO: key of clip latent idx can be changed later
-        ret[self.caption_key] = out['input_idx'].clone().detach()
+        ret[self.caption_key] = out['caption_idx'].clone().detach()
         if 'attention_mask' in out:
             ret[f"{self.caption_key}_attention_mask"] = out["attention_mask"].clone().detach()
         
