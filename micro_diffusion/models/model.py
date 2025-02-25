@@ -88,8 +88,6 @@ class LatentDiffusion (ComposerModel):
         self.eval_mask_ratio = 0 # no masking during inference/sampling/evaluation
         assert self.train_mask_ratio >= 0, f"Masking ratio has to be non negative"
 
-        # TODO:remove later
-        self.randn_like = torch.randn_like
         self.latent_scale = self.vae.config.scaling_factor
 
         self.text_encoder = text_encoder
@@ -143,52 +141,142 @@ class LatentDiffusion (ComposerModel):
             # propagated mask looks like (B, 1, 1, 1)
             propagated_drop_caption_vectors =  batch['drop_caption_mask'].view ([-1] + [1] *(len(conditioning.shape) - 1))
 
+            # implicit broadcasting:
+            # (512, 1, 77, 1024) * (512, 1, 1, 1)
             conditioning *= propagated_drop_caption_vectors
 
-            loss = self.edm_loss (
-                latents.float(),
-                conditioning.float(),
-                mask_ratio = self.train_mask_ratio if self.training else self.eval_mask_ratio
-            )
+        loss = self.edm_loss (
+            latents.float(),
+            conditioning.float(),
+            mask_ratio = self.train_mask_ratio if self.training else self.eval_mask_ratio
+        )
 
-            # TODO: why return latents
-            return (loss, latents, conditioning)
+        # TODO: why return latents
+        return (loss, latents, conditioning)
         
-        # TODO: introspect and change variables later
-        def model_forward_wrapper(
-            self,
-            x: torch.Tensor,
-            sigma: torch.Tensor, # sigma_t
-            y: torch.Tensor,
-            model_forward_fxn: callable,
-            mask_ratio: float,
+    # TODO: introspect and change variables later
+    def model_forward_wrapper(
+        self,
+        x: torch.Tensor,
+        sigma_t: torch.Tensor, # sigma_t comes from logvar
+        y: torch.Tensor,
+        model_forward_fxn: callable,
+        mask_ratio: float,
+        **kwargs
+    ) -> dict:
+        """Wrapper for the model call in EDM (https://github.com/NVlabs/edm/blob/main/training/networks.py#L632)"""
+        # shape of signal x0 = (B, 4, 32, 32)
+        # can be done like this sigma_t = sigma_t.unsqueeze(1,2,3)
+        sigma_t = sigma_t.to(x.dtype).reshape (-1, 1, 1, 1)
+        c_skip = (
+            self.edm_config.sigma_data ** 2 /
+            (sigma_t ** 2 + self.edm_config.sigma_data ** 2)
+        )
+
+        c_out = sigma_t * self.edm_config.sigma_data / (sigma_t ** 2 + self.edm_config.sigma_data ** 2).sqrt()
+        c_in = 1 / (self.edm_config.sigma_data ** 2 + sigma_t ** 2).sqrt()
+
+        # noise scaling
+        # sigma_t shape (B, 1, 1, 1)
+        c_noise = sigma_t.log() / 4 # (B, 1, 1, 1)
+
+        out = model_forward_fxn (
+            (c_in * x).to(x.dtype),
+            c_noise.flatten(), # TODO: introspect later (B)
+            y, # text caption?
+            mask_ratio=mask_ratio, 
             **kwargs
-        ) -> dict:
-            """Wrapper for the model call in EDM (https://github.com/NVlabs/edm/blob/main/training/networks.py#L632)"""
-            sigma = sigma.to(x.dtype).reshape (-1, 1, 1, 1)
-            c_skip = (
-                self.edm_config.sigma_data ** 2 /
-                (sigma ** 2 + self.edm_config.sigma_data ** 2)
-            )
+        )
 
-            c_out = sigma * self.edm_config.sigma_data / (sigma ** 2 + self.edm_config.sigma_data ** 2).sqrt()
-            c_in = 1 / (self.edm_config.sigma_data ** 2 + sigma ** 2).sqrt()
+        # TODO: change sample keys
+        F_x = out ['sample']
+        c_skip = c_skip.to(F_x.device)
+        x = x.to(F_x.device)
+        c_out = c_out.to(F_x.device)
+        D_x = c_skip * x + c_out * F_x
+        out ['sample'] = D_x
+        return out
+    
+    def edm_loss (self, x: torch.Tensor, y: torch.Tensor, mask_ratio: float = 0, **kwargs) -> torch.Tensor:
+        # sample B (512) eps from N(0, I) reshape to be of shape (B, 1, 1, 1)
+        eps = torch.randn([x.shape[0], 1, 1, 1], device=x.device) # eps from N(0, I) (B, 1, 1, 1)
+        
+        # sample sigma(t) from lognormal (P_mean, P_std)
+        sigma_t = (self.edm_config.P_mean + self.edm_config.P_std*eps).exp()
+        
+        # loss weighting 
+        loss_weight = (sigma_t ** 2 + self.edm_config.sigma_data ** 2) / (sigma_t * self.edm_config.sigma_data) ** 2
 
-            c_noise = sigma.log() / 4
+        # sample (B, 4, 32, 32) random noise from N(0, I) to add unto x
+        noise_eps = torch.randn_like (x) * sigma_t # (B, 4, 32, 32) * (B, 1, 1, 1)
 
+        # x_t (corrupted signal x0 + sigma_t eps from (0,I))
+        # note that we dont scale down signal with root 1-beta_t as c_in scaling makes
+        # inputs to neural network unit variance, no need to complicate the SDE formulation
+        corrupted_signal = x + noise_eps
 
-            out = model_forward_fxn (
-                (c_in * x).to(x.dtype),
-                c_noise.flatten(),
-                y,
-                mask_ratio=mask_ratio,
-                **kwargs
-            )
+        model_out = self.model_forward_wrapper (corrupted_signal, sigma_t, y, self.dit, mask_ratio=mask_ratio, **kwargs)
+        # change key later, bullshit
+        D_xn = model_out['sample'] # (B, C, H, W)
+        loss = loss_weight * ((D_xn - x)**2) # (B, C, H, W)
+        
+        # TODO: introspect: I think we finetune on 0 mask ratio after pretraining
+        if mask_ratio > 0:
+            # if image_latents were masked before feeding to DiT to reduce input seq length to
+            # transformer, the 8x8 has to be converted to 32x32 then fed into VAE decoder
 
-            F_x = out ['sample']
-            c_skip = c_skip.to(F_x.device)
-            x = x.to(F_x.device)
-            c_out = c_out.to(F_x.device)
-            D_x = c_skip * x + c_out * F_x
-            out ['sample'] = D_x
-            return out
+            assert (self.dit.training and 'mask' in model_out), f"Masking is only done during training"
+            loss = loss.mean(dim=1) # mean along channels shape will be (B, 32, 32) = (B, H, W)
+            # convert to DiT semantic space, in terms of patches
+            loss = F.avg_pool2d (loss, self.dit.patch_size) # (B, 16, 16) loss for all patches processed by DiT
+            # unroll the patches and then remove impact of masked patches, because the masked patches do not
+            # contribute to DiT loss, because input to DiT is only unmasked patches and it only learns to
+            # denoise unmasked patches
+            # unrolling makes it easier because mask is of shape (B, transformer_sequence_length) where 
+            # transformer_sequence_length = 32/dit.patch_size * 32/dit.patch_size; 32 comes from latent res for vae
+
+            loss = loss.flatten (1) # (B, 256); preserve B and 256 comes from patch_size = 2 and vae latent res = 32
+
+            unmask = 1 - model_out['mask'] # (B, 256) 1 where unmasked, 0 where patches were masked
+            # for average loss coressponding to all patches, we only need divide by number of unmasked patches
+            normalization_factor = unmask.sum(dim = 1) # (B, 1)
+            loss = (loss * unmask).sum(dim = 1) # (B, 1)
+            loss /= normalization_factor # (B, 1)
+        return loss.mean()
+
+    # Composer specific formatting of model loss and eval functions.
+    def loss (self, outputs: tuple, batch: dict)-> torch.Tensor:
+        # forward pass already computed the loss function
+        return outputs[0]
+    
+    # Composer specific validation format
+    def eval_forward (self, batch:dict, outputs:Optional[tuple] = None)-> tuple:
+        # Skip if output is already calculated (e.g, during training forward pass)
+        if outputs is not None:
+            return outputs
+        else:
+            loss, _, _ = self.forward (batch)
+            return loss, None, None
+    
+    # TODO: introspect later, get reduced dist loss for validation maybe?
+    def get_metrics (self, is_train:bool = False) -> dict:
+        # get_metrics is expected to return a dict is composer
+        return {'loss' : DistLoss()}
+    
+    def update_metric (self, batch: dict, outputs: tuple, metric: DistLoss):
+        metric.update (outputs[0])
+    
+    @torch.no_grad()
+    def edm_sampler_loop(self, x:torch.Tensor, y:torch.Tensor, steps: Optional[int] = None, cfg: float = 1.0, **kwargs)->torch.Tensor:
+        # no masking during inference
+        mask_ratio = 0
+        # we have to forward model twice for CFG, once with conditioning, once without
+        model_forward_fxn = (partial(self.dit.forward, cfg=cfg) if cfg > 1.0 else self.dit.forward)
+
+        # timestep discretization
+        num_steps = self.edm_config.num_steps if steps is None else steps
+        step_indices = torch.arange (num_steps, dtype=torch.float16, device=x.device)
+
+        t_steps = (
+            self.edm_config.sigma_max ** (1 / self.edm_config.rho)
+        )
