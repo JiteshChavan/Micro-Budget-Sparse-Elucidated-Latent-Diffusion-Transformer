@@ -201,6 +201,7 @@ def main (args):
                 conditioning = text_encoder.encode (
                     # captions are stacked for a batch (512, 1, 77)
                     # encoder expects (B, 77) 2d input, reshape accordingly
+                    # we only stack captions to compute latent shards
                     captions.view(-1, captions.shape[-1]),
                     attention_mask=attention_mask
                 )[0].to(DATA_TYPES[args.save_dtype])

@@ -189,11 +189,11 @@ class LatentDiffusion (ComposerModel):
         )
 
         # TODO: change sample keys
-        F_x = out ['sample']
+        F_x = out ['sample'] # output of DiT
         c_skip = c_skip.to(F_x.device)
         x = x.to(F_x.device)
         c_out = c_out.to(F_x.device)
-        D_x = c_skip * x + c_out * F_x
+        D_x = c_skip * x + c_out * F_x # output of model (green box)
         out ['sample'] = D_x
         return out
     
@@ -278,5 +278,187 @@ class LatentDiffusion (ComposerModel):
         step_indices = torch.arange (num_steps, dtype=torch.float16, device=x.device)
 
         t_steps = (
-            self.edm_config.sigma_max ** (1 / self.edm_config.rho)
+            self.edm_config.sigma_max ** (1 / self.edm_config.rho) +
+            step_indices / (num_steps - 1) *
+            ( (self.edm_config.sigma_min) ** (1 / self.edm_config.rho) -
+            self.edm_config.sigma_max ** (1 / self.edm_config.rho)) 
+        ) ** self.edm_config.rho
+        t_steps = torch.cat([torch.as_tensor(t_steps), torch.zeros_like(t_steps[:1])])
+
+        # construct reverse noise schedule as interpolation between sigma_max and sigma_min
+        # append a jump from t = 1 to t = 0, that samples from distribution with 0 variance
+        # implicit implication that beta(t) decays, stochastic exploration dies down towards t = 0 and 
+        # finally variance of weiner process becomes 0
+        # Corresponds to Final step of DDPM samples
+
+        # now t_steps basically has different noise levels with which we have to denoise
+        # Main sampling loop.
+        # here x is pure gaussian noise
+        x_next = x.to(torch.float64) * t_steps[0]
+        # map time step transitions [(0,1)......(16,17)]
+        # here time represents noise
+        for i, (sigma_t, sigma_t_next) in enumerate (zip(t_steps[:-1], t_steps[1:])):
+            # for first iteration x_current is N(0, 80I) (80 is sigma_max)
+            x_current = x_next
+            # increase noise temporarily
+            # we have deterministic sampling with current setting
+            gamma = ( # basically sigma_t, or beta_t that controls stochastic noise injection
+                min (self.edm_config.S_churn / num_steps, np.sqrt(2) - 1)
+                if self.edm_config.S_min <= sigma_t <= self.edm_config.S_max else 0
+            )
+
+            # stochastic (langevin) exploration and ODE variance encapsulated in single variable
+            sigma_t_hat = torch.as_tensor (sigma_t + gamma * sigma_t)
+
+            # variance scaling factor of noise injection that decays as we approach 0
+            # with current deterministic setting it will always be 0
+
+            # STEP 1 :inject controlled noise
+            beta_t = (sigma_t_hat ** 2 - sigma_t ** 2).sqrt()
+            x_t = (
+                x_current +  beta_t*
+                self.edm_config.S_noise *
+                torch.randn_like (x_current) 
+            )
+
+            # STEP 2: follow score gradient
+            
+            # Euler step.
+            # x_t is signal with decayed stochastic noise injection
+            x0_approx = self.model_forward_wrapper (
+                x_t.to(torch.float32),
+                sigma_t_hat.to (torch.float32),
+                y,
+                model_forward_fxn,
+                mask_ratio=mask_ratio,
+                **kwargs 
+            )['sample'].to(torch.float64)
+
+            # x0_approx is approximation of x0 from x_t
+            # xt = x0 + sigma_t * eps 
+            # eps = (xt - x0) / sigma_t
+            eps_o1 = (x_t - x0_approx) / sigma_t_hat
+            x_next = x_t - (sigma_t_hat - sigma_t_next) * eps_o1   
+            
+            # Note that we don't try to solve for x0 in a single step as : x0 = x_T - sigma_t * eps
+            # as that would overshoot, and ignore the dynamics of different noise levels
+            # we instead step in terms of dt
+            # Multiplying the eps with sigma_t would take a full denoising step immediately, using dt ensures
+            # smoother updates, following the ODE trajectory rather than making a sudden larger jump
+
+            # Heun Step : 2nd order correction
+            if i < num_steps - 1:
+                x0_approx = self.model_forward_wrapper (
+                    x_next.to(torch.float32),
+                    sigma_t_next.to(torch.float32),
+                    y,
+                    model_forward_fxn,
+                    mask_ratio= mask_ratio,
+                    **kwargs
+                )['sample'].to(torch.float64)
+                eps_o2 = (x_next - x0_approx) / sigma_t_next
+                x_next = x_t - (sigma_t_hat - sigma_t_next) * (0.5 * eps_o1 + 0.5 * eps_o2)
+        return x_next.to(torch.float32)
+    
+    @torch.no_grad()
+    def generate (
+        self,
+        prompt : Optional[list] = None,
+        tokenized_prompts : Optional[torch.LongTensor] = None,
+        attention_mask : Optional[torch.LongTensor] = None,
+        guidance_scale : Optional[float] = 5.0,
+        num_inference_stepts: Optional[int] = 30,
+        seed: Optional[int] = None,
+        return_only_latents : Optional[bool] = False,
+        **kwargs
+    )-> torch.Tensor:
+        # check caption prompt
+        assert prompt or tokenized_prompts, f"Must provide either prompt or tokenized prompts"
+        device = self.vae.device # id model device during training
+        rng_generator = torch.Generator(device=device)
+        if seed:
+            rng_generator = rng_generator.manual_seed(seed)
+        
+        # caption prompt -> tokenize -> clip embed
+        if tokenized_prompts is None:
+            out = self.tokenizer.tokenize (prompt)
+            tokenized_prompts = out['caption_idx']  # (B, 77)
+            attention_mask = (
+                out['attention_mask'] if 'attention_mask' in out else None
+            )
+        
+        text_embeddings = self.text_encoder.encode (
+            tokenized_prompts.to(device),
+            attention_mask=attention_mask.to(device) if attention_mask is not None else None
+        )[0] # extract latent embeddings from returned tuple ((B,1,T,C), NONE)
+
+        latents = torch.randn (
+            (len(text_embeddings), self.dit.in_channels, self.latent_res, self.latent_res),
+            device = device,
+            generator=rng_generator
         )
+
+        # iteratively denoise latents
+        latents = self.edm_sampler_loop (
+            latents,
+            text_embeddings,
+            num_inference_stepts,
+            cfg=guidance_scale
+        )
+
+        if return_only_latents:
+            return latents
+
+        # decode latents with VAE
+        # scale back up with VAE scaling facotr
+        latents = (1 / self.latent_scale) * latents
+        torch_dtype = DATA_TYPES[self.dtype]
+        image = self.vae.decode (latents.to(torch_dtype)).sample
+        image = (image/2 + 0.5).clamp(0,1)
+        image = image.float().detach()
+        return image
+    
+
+def create_latent_diffusion (
+        vae_name: str = 'stabilityai/stable-diffusion-xl-base-1.0',
+        text_encoder_name: str = 'openclip:hf-hub:apple/DFN5B-CLIP-ViT-H-14-378',
+        dit_arch: str = "MicroDiT_XL_2",
+        latent_res: int = 32,
+        in_channels: int = 4,
+        pos_interp_scale: float = 1.0,
+        dtype: str = 'bfloat16',
+        precomputed_latents: bool = True,
+        p_mean: float = -0.6,
+        p_std: float = 1.2,
+        train_mask_ratio: float = 0.0,
+)-> LatentDiffusion:
+    # Retrieve max sequence length (s) and text n_embd from text encoder
+    seq_length, n_embd = get_text_encoder_embedding_format(text_encoder_name)
+
+    # TODO: change model_zoo and ['sample'] keys
+    dit = getattr (model_zoo, dit_arch) (  # get class of specified dit_arch from the imported file
+        input_size = latent_res,
+        caption_channels = n_embd,
+        pos_interp_scale = pos_interp_scale,
+        in_channels=in_channels
+    )
+        
+    vae = AutoencoderKL.from_pretrained (vae_name, subfolder= None if vae_name=='ostris/vae-kl-f8-d16' else 'vae', torch_dtype=DATA_TYPES[dtype], pretrained=True)
+    tokenizer = UniversalTokenizer (text_encoder_name)
+    text_encoder = UniversalTextEncoder (text_encoder_name, dtype=dtype, pretrained=True)
+    
+    diffusion_model = LatentDiffusion (
+        dit = dit,
+        vae = vae,
+        text_encoder = text_encoder,
+        precomputed_latents= precomputed_latents,
+        dtype=dtype,
+        latent_res=latent_res,
+        p_mean=p_mean,
+        p_std=p_std,
+        train_mask_ratio=train_mask_ratio  
+    )
+    return diffusion_model
+
+
+        

@@ -16,7 +16,7 @@ print ("!!!!!!! Done!!!!!")
 import gc
 text_encoder.to(device)
 gc.collect()
-caption = ["pep my goat", "antony best"]
+caption = ["pep my goat", "antony best", "test"]
 tokenizer = UniversalTokenizer ('openclip:hf-hub:apple/DFN5B-CLIP-ViT-H-14-378')
 
 
