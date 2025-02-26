@@ -25,51 +25,6 @@ DATA_TYPES = {
     'float32' : torch.float32
 }
 
-def modulate (x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
-    """Scale and Shift the input tensor"""
-    # TODO: fix later
-    return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
-
-from dataclasses import dataclass
-@dataclass
-class MLPConfig:
-    fan_in : int
-    fan_h : int
-    fan_out : int
-    # non linearity is not optional, if not specified it will be GELU
-    non_linearity : Any = nn.GELU(approximate='tanh')
-    # optional
-    norm_layer : Optional[Any] = None
-    bias : bool = True
-
-
-class MLP (nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.fc1 = nn.Linear (config.fan_in, config.fan_h, bias=config.bias)
-        self.activation = config.non_linearity
-        self.mlp_norm = config.norm_layer if config.norm_layer is not None else nn.Identity()
-        self.fc2 = nn.Linear (config.fan_h, config.fan_out, bias=config.bias)
-
-    def forward (self, x: torch.Tensor)-> torch.Tensor:
-        x = self.fc1(x)
-        x = self.activation(x)
-        x = self.mlp_norm(x)
-        x = self.fc2(x)
-        return x
-
-# type hints are mere formality, python doesnt enforce types
-def create_norm (norm_type: str, dim: int, eps: float=1e-6)->nn.Module:
-    """Creates a normalization layer based on specified type"""
-    if norm_type == "layernorm":
-        # elementwise_affine = False gives RMSNorm (NoParam Norm: no one cares about that)
-        return nn.LayerNorm (dim, eps=eps, bias=False)
-    else:
-        raise ValueError('Norm Type Not supported!')
-
-
-
 def get_text_encoder_embedding_format(tokenizer_name: str) -> Tuple[int, int]:
     """Returns sequence length and token embedding dimension for text encoder."""
     if tokenizer_name in [
