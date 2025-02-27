@@ -7,6 +7,9 @@ import torch.nn.functional as F
 
 from dataclasses import dataclass
 
+# Remember to write _init_weights (kaiming init for all layers in DIT), Latent Diffusion model script has no
+# weights to be initialized
+
 @dataclass
 class MLPConfig:
     fan_in : int
@@ -50,18 +53,73 @@ class SelfAttention (nn.Module):
         q = self.ln_q(q) # (B, T, C')
         k = self.ln_k(k) # (B, T, C')
 
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view (B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, self.n_hidden // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        k = k.view(B, T, self.n_head, self.n_hidden // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view (B, T, self.n_head, self.n_hidden // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
         y = F.scaled_dot_product_attention (q, k, v, is_causal=False) # (B, nh, T, hs)
         y = y.transpose(1, 2).contiguous().view(B, T, self.n_hidden) # (B, T, C')
-
+        
+        # project back to n_embd from n_hidden
         y = self.proj (y) # (B, T, C)
         return y
     
 
+class CrossAttention (nn.Module):
+    # B T C text k v
+    # B T X image q
+    # channels have to be same for q @ k
+    def __init__(self, n_embd, n_head, n_hidden=None, norm_eps=1e-6, qkv_bias=True):
+        super().__init__()
+        self.n_embd = n_embd
+        self.n_head = n_head
 
+        if n_hidden is None:
+            n_hidden = n_embd
+        self.n_hidden = n_hidden
+
+        assert n_hidden % n_head == 0, f"n_hidden:{n_hidden} should be divisible among heads:{n_head}"
+
+        self.ln_q = create_norm ("layernorm", dim=n_hidden, eps=norm_eps)
+        self.ln_k = create_norm ("layernorm", dim=n_hidden, eps=norm_eps)
+        
+        # query from image
+        self.cx_attn_q = nn.Linear (n_embd, n_hidden, bias=qkv_bias)
+        self.cx_attn_kv = nn.Linear (n_embd, 2*n_hidden, bias=qkv_bias)
+
+        self.proj = nn.Linear (n_hidden, n_embd, bias=qkv_bias)
+    
+    def forward (self, x, condition):
+        # shapes from image
+        B, T, C = x.shape
+        # shapes from text
+        T_B, T_T, T_C = condition.shape
+
+        assert C == T_C, f"channels mismatch in cross attention"
+
+        # kv from text
+        kv = self.cx_attn_kv (condition) # (B, T, 2C') C' = n_hidden
+        # q from image x
+        q = self.cx_attn_q (x) # (B, T, C')
+
+        k, v = kv.split (self.n_hidden, dim = 2) # 2x (B, T, C')
+        # normalize key and query
+        q = self.ln_q (q) # (B, T, C')
+        k = self.ln_k (k) # (B, T, C')
+
+        q = q.view (B, T, self.n_head, self.n_hidden // self.n_head).transpose(1,2) # (B, nh, T, hs)
+        k = k.view (T_B, T_T, self.n_head, self.n_hidden // self.n_head).transpose(1,2) # (T_B, nh, T_T, hs)
+        v = v.view (T_B, T_T, self.n_head, self.n_hidden // self.n_head).transpose(1,2) # (T_B, nh, T_T, hs)
+
+        # Q @ K 
+        # B nh T hs @ T_B, nh, T_T, hs
+        # B nh T T_T this @ value (T_B, nh, T_T, hs)
+        # B nH T hs
+
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=False) # (B, nh, T, hs)
+        y = y.transpose (1,2).contiguous().view(B, T, self.n_hidden) # (B, T, C')
+        y = self.proj(y) # (B, T, C')-> (B, T, C)
+        return y
 
 
 class MLP (nn.Module):
