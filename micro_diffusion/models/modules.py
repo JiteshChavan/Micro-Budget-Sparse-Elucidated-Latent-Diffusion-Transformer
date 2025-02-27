@@ -4,6 +4,7 @@ from typing import Any, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 from dataclasses import dataclass
 
@@ -88,6 +89,7 @@ class CrossAttention (nn.Module):
         self.cx_attn_kv = nn.Linear (n_embd, 2*n_hidden, bias=qkv_bias)
 
         self.proj = nn.Linear (n_hidden, n_embd, bias=qkv_bias)
+        self.proj.NANO_GPT_SCALE_INIT = 1
     
     def forward (self, x, condition):
         # shapes from image
@@ -122,6 +124,114 @@ class CrossAttention (nn.Module):
         return y
 
 
+class CaptionProjection (nn.Module):
+    """ Projects caption embeddings to model n_embd
+        specify proper MLP config at init
+    """
+    # NANO_GPT_SCALE_INIT not required no residual pathway
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.proj = MLP (config)
+        # TODO: introspect for residual connection later
+        #self.proj.fc2.NANO_GPT_SCALE_INIT = 0
+    
+    def forward (self, x):
+        x = self.proj(x)
+        return x
+
+class T2IFinalLayer (nn.Module):
+    """
+        # Step 1: scale and shift (Modulate) image signal x adaptively based on time_embedding
+        # step 2: expand one block (1, C) into (1, patchsize * patchsize * C)
+        # implicitly expanding one block into patchsize * patchsize blocks which can be reshaped/arranged
+        # to processed by VAE decoder
+
+        adaLN stands for adaptive layernorm, it devises gamma/beta as a linear function of input
+        so every input has its own gamma/beta
+        which is then used to normalize the inputs as  (gamma * input + beta)
+
+    """
+    # cant hardcode n_hidden because layerwise scaling increases dit n_embd as we progress through the network
+    def __init__(self, n_hidden, patch_size, fan_out, activation, norm_final):
+        super().__init__()
+        self.n_hidden = n_hidden
+        self.linear = nn.Linear (n_hidden, patch_size*patch_size*fan_out)
+        self.adaLN_modulation = nn.Sequential (
+            activation,
+            nn.Linear (n_hidden, 2 * n_hidden)
+        )
+        self.norm_final = norm_final
+    """
+        x is image (B, T, C)
+        time_embd (B, C) -> time embedding doesnt have tokens or sequence length
+        just one embedding for one timestep for one image in one batch
+    """
+    def forward (self, x, time_embd):
+        # get scale and shift from adaLN depending on current timestep
+        shift, scale = self.adaLN_modulation (time_embd).split(self.n_hidden, dim=1)
+        # normalize then modulate x with respect to current time step
+        x = modulate (self.norm_final(x), shift=shift, scale=scale)
+        x = self.linear(x)
+        return x
+
+class TimeStepEmbedder (nn.Module):
+    """
+        Embeds scalar noise level sigma_t into n_t_embd dimensional vector using sinusoidal embeddings
+        then refines this n_t_embd dimensional vectors using MLP to prouce n_embd dimensional representation
+        that is compatible with DiT
+    """
+
+    def __init__ (self, sigma_t, n_t_embd, n_embd, activation):
+        self.sigma_t = sigma_t
+        self.n_t_embd = n_t_embd
+        self.n_embd = n_embd
+        self.activation = activation
+        self.mlp = nn.Sequential (
+            nn.Linear (n_t_embd, n_embd, bias=True),
+            self.activation,
+            nn.Linear (n_embd, n_embd, bias=True)
+        )
+    
+    @staticmethod
+    def embed_timestep (sigma_t, n_t_embd, max_period = 10000):
+        # half the time embedding dimensions will be cosine rest of half will be sine
+        # if n_t_embd is odd, then we append 0 frequency component to maintain consistency
+        half = n_t_embd // 2
+
+        log_freqs = -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32, device=sigma_t.device)
+        # now we have log_freqs in descending order, they start from 0 and grow negative as we move right
+        # later we exponentiate log_freqs to get frequencies, and exp(verylarge negative number) is very small
+        # we dont want frequency components that are really close to 0 and almost indistinguishable from each other at the tail end
+        # thats why we scale down these negative numbers by "half" so that we have smaller negative numbers
+        log_freqs = log_freqs / half
+        # exponentiate to get freqs
+        freqs = torch.exp (log_freqs)
+        # note that we resort to exponential scale /decay to ensure wide range of dfs
+        # df would be constant in linear scale
+
+        sigma_t = sigma_t.unsqueeze(1) #(1, 1)
+        args = sigma_t * freqs
+        # embedding vector thats n_t_embd long if n_t_embd is even
+        # otherwise its n_t_embd - 1
+        embedding = torch.cat((torch.cos(args), torch.sin(args)), dim=-1)
+
+        if n_t_embd % 2 != 0:
+            # rectify the dimensionality of the embedding if n_t_embd was odd
+            # n_t_embd - 1 -> n_t_embd by appending 0 frequency component
+            embedding = torch.cat((embedding, torch.zeros_like(embedding[:, 0])), dim=-1)
+        return embedding
+
+    # return type of first parameter in this class
+    @property
+    def dtype(self) -> torch.dtype:
+        return next(self.parameters()).dtype
+    
+    def forward (self, sigma_t):
+        t_embedding = self.embed_timestep (sigma_t, self.n_t_embd).to(self.dtype)
+        return self.mlp (t_embedding)
+
+
 class MLP (nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -130,6 +240,8 @@ class MLP (nn.Module):
         self.activation = config.non_linearity
         self.mlp_norm = config.norm_layer if config.norm_layer is not None else nn.Identity()
         self.fc2 = nn.Linear (config.fan_h, config.fan_out, bias=config.bias)
+        # TODO: introspect for res con later
+        #self.fc2.NANO_GPT_SCALE_INIT = 1
 
     def forward (self, x: torch.Tensor)-> torch.Tensor:
         x = self.fc1(x)
@@ -150,5 +262,10 @@ def create_norm (norm_type: str, dim: int, eps: float=1e-6)->nn.Module:
 
 def modulate (x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     """Scale and Shift the input tensor"""
-    # TODO: fix later
+    # X (B, T, C)
+    # scale (B,C)
+    # shift (B,C)
+    # return (B,T,C) * (1 + (B, [1], C)) + (B, [1], C)
+
+    # add 1 to scale so that during intial stages, if scale is 0 it doesnt completely eliminate x
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
