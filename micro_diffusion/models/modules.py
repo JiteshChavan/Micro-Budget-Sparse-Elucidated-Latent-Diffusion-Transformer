@@ -1,5 +1,7 @@
-from typing import Any, Optional
-
+from typing import Any, Optional, Union, Tuple
+from collections.abc import Iterable
+from itertools import repeat
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -230,6 +232,46 @@ class TimeStepEmbedder (nn.Module):
     def forward (self, sigma_t):
         t_embedding = self.embed_timestep (sigma_t, self.n_t_embd).to(self.dtype)
         return self.mlp (t_embedding)
+
+
+def ntuple(n_dim :int, x):
+    """ Converts input into n_dim-tuple. For handling resolutions"""
+    if isinstance(x, Iterable) and not isinstance(x, str):
+        return tuple(x)
+    else:
+        return tuple(repeat(x, n_dim))
+
+def get_2d_sincos_pos_embed (
+        n_embd, base_size, 
+        grid_size:Union[int, Tuple[int, int]], 
+        cls_token :bool = False, extra_tokens:int=0,
+        pos_interp_scale = 1.0
+    ):
+        if isinstance(grid_size, Iterable) and not isinstance(grid_size, str):
+            grid_size = ntuple (2, grid_size)
+        # interpolate position embeddings to adapt model to different resolutions.
+        # makes it so that specific spatial positions have similar embeddings
+        
+        # height is 0, width is 1
+        # division by grid_size[0] makes pos embeddings for different resolutions the same at specific spots
+        # further division by (base_size / pos_interp_scale) mutates the range (say 0 to 16 instead of 0 to 1)
+        # so that model can distinguish better
+        grid_h = np.arange (grid_size[0], dtype=np.float32) / (grid_size[0] / base_size) / pos_interp_scale
+        grid_w = np.arange (grid_size[1], dtype=np.float32) / (grid_size[1] / base_size) / pos_interp_scale
+
+        # width, height
+        grid = np.meshgrid (grid_w, grid_h)
+        # stack along axis 0 to get two matrices, first for width co-ordinates second for height co-ordinates
+        grid = np.stack (grid, axis=0) # (2, grid_size[1], grid_size[0])
+        grid = grid.reshape (2, 1, grid_size[1], grid_size[0]) # add spurious dimension to be processed by get_embedding function
+
+        pos_embedding = get_2d_sinusoidal_embedding_from_grid (n_embd, grid)
+        if cls_token and extra_tokens > 0:
+            pos_embedding = np.concatenate ([np.zeros([extra_tokens, n_embd]), pos_embedding], axis=0)
+        
+        return pos_embedding
+
+
 
 
 class MLP (nn.Module):
