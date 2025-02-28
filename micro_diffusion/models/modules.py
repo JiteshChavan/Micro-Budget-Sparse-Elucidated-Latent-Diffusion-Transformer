@@ -312,6 +312,33 @@ def get_1d_sinusoidal_embedding (n_embd, pos):
     cos_embd = np.cos(mutated_freqs)
     return np.concatenate ([sin_embd, cos_embd], axis=1)
 
+def get_mask (batch, length, mask_ratio, device):
+    # calculate fraction thats not meant to be masked
+    assert (mask_ratio <= 1.0 and mask_ratio >= 0.0), f"invalid mask ratio"
+
+    keep_ratio = 1 - mask_ratio
+    length_keep = int (keep_ratio * length)
+
+    # sample noise for randomized masking
+    noise = torch.rand (batch, length, device=device)
+    # Find indices that correspond to smaller noise along seq length
+    idx_ascending = torch.argsort (noise, dim = 1)
+    # Find indices into idx_asc that yield original noise when indexed into noise
+    # basically noise[idx_asc[idx_restore[0]]] gives the original value at 0 for the sampled noise
+    idx_restore = torch.argsort (idx_ascending, dim = 1)
+    # keep only unmasked indices
+    idx_keep = idx_ascending[:, :length_keep]
+
+    mask = torch.ones (batch, length, device=device)
+    mask[:, :length_keep] = 0
+    # gather mask with respect to the originally smapled random noise to make it random masking
+    mask = torch.gather (mask, dim=1, index=idx_restore)
+
+    return {
+        'mask' : mask,
+        'idx_keep' : idx_keep,
+        'idx_restore' : idx_restore
+    }
 
 
 class MLP (nn.Module):

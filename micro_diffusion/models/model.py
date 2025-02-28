@@ -189,12 +189,12 @@ class LatentDiffusion (ComposerModel):
         )
 
         # TODO: change sample keys
-        F_x = out ['sample'] # output of DiT
+        F_x = out ['sample'] # output of DiT 
         c_skip = c_skip.to(F_x.device)
         x = x.to(F_x.device)
         c_out = c_out.to(F_x.device)
         D_x = c_skip * x + c_out * F_x # output of model (green box)
-        out ['sample'] = D_x
+        out ['sample'] = D_x # approximation of x0
         return out
     
     def edm_loss (self, x: torch.Tensor, y: torch.Tensor, mask_ratio: float = 0, **kwargs) -> torch.Tensor:
