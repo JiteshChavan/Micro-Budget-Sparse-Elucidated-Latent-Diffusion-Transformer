@@ -208,12 +208,13 @@ class TimeStepEmbedder (nn.Module):
         # thats why we scale down these negative numbers by "half" so that we have smaller negative numbers
         log_freqs = log_freqs / half
         # exponentiate to get freqs
-        freqs = torch.exp (log_freqs)
+        freqs = torch.exp (log_freqs) 
         # note that we resort to exponential scale /decay to ensure wide range of dfs
         # df would be constant in linear scale
 
         sigma_t = sigma_t.unsqueeze(1) #(1, 1)
-        args = sigma_t * freqs
+        args = sigma_t * freqs # (1,1) * (half)
+        # args is now (1, half)
         # embedding vector thats n_t_embd long if n_t_embd is even
         # otherwise its n_t_embd - 1
         embedding = torch.cat((torch.cos(args), torch.sin(args)), dim=-1)
@@ -222,7 +223,7 @@ class TimeStepEmbedder (nn.Module):
             # rectify the dimensionality of the embedding if n_t_embd was odd
             # n_t_embd - 1 -> n_t_embd by appending 0 frequency component
             embedding = torch.cat((embedding, torch.zeros_like(embedding[:, 0])), dim=-1)
-        return embedding
+        return embedding #(1, n_t_embd)
 
     # return type of first parameter in this class
     @property
@@ -242,11 +243,15 @@ def ntuple(n_dim :int, x):
         return tuple(repeat(x, n_dim))
 
 def get_2d_sincos_pos_embed (
-        n_embd, base_size, 
+        n_embd, 
         grid_size:Union[int, Tuple[int, int]], 
+        base_size:int=16, 
         cls_token :bool = False, extra_tokens:int=0,
         pos_interp_scale = 1.0
     ):
+        """ One spot / pixel in grid is represented by n_embd channels, n_embd/2 come from scaled x
+            coordinate, n_embd/2 come from scaled y co-ordinate
+        """
         if isinstance(grid_size, Iterable) and not isinstance(grid_size, str):
             grid_size = ntuple (2, grid_size)
         # interpolate position embeddings to adapt model to different resolutions.
@@ -261,8 +266,10 @@ def get_2d_sincos_pos_embed (
 
         # width, height
         grid = np.meshgrid (grid_w, grid_h)
+
         # stack along axis 0 to get two matrices, first for width co-ordinates second for height co-ordinates
-        grid = np.stack (grid, axis=0) # (2, grid_size[1], grid_size[0])
+
+        grid = np.stack (grid, axis=0) # (2, grid_size[1], grid_size[0]) (2, W, H)
         grid = grid.reshape (2, 1, grid_size[1], grid_size[0]) # add spurious dimension to be processed by get_embedding function
 
         pos_embedding = get_2d_sinusoidal_embedding_from_grid (n_embd, grid)
@@ -271,6 +278,39 @@ def get_2d_sincos_pos_embed (
         
         return pos_embedding
 
+def get_2d_sinusoidal_embedding_from_grid (n_embd, grid):
+    "Takes in a grid (2, 1, W, H), generates 2D embedding for the said grid"
+
+    assert n_embd % 2 == 0
+    half_embd = n_embd // 2
+
+    # send x co-ordinates (x) (1, W, H)
+    embd_h = get_1d_sinusoidal_embedding(half_embd, grid[0]) # (HW, half_embd)
+    # send y co-ordinates (y) (1, W, H) 
+    embd_w = get_1d_sinusoidal_embedding(half_embd, grid[1]) # (HW, half_embd)
+    positional_embedding = np.concatenate([embd_h, embd_w], axis = 1) # (HW, n_embd)
+    return positional_embedding 
+
+def get_1d_sinusoidal_embedding (n_embd, pos):
+    """1D sinusoidal embeddings from grid"""
+    assert n_embd % 2 == 0
+
+    omega = np.arange(n_embd//2, dtype=np.float64) # (D/2)
+    omega = omega / (n_embd//2)
+
+    # omega is linearly spaced, to generate exponentially decaying freqs
+    # exponentiate omge to a number thats smaller than 1
+    freqs = (1/10000) ** omega # (D/2)
+    pos = pos.reshape(-1) # (M)
+    # now inject position into these frequencies
+    # first way: if they are tensors
+    # pos.unsqueeze(1) * freqs
+    # second way
+    mutated_freqs = np.einsum('m,d->md', pos, freqs) # (HW=M, D/2)
+
+    sin_embd = np.sin(mutated_freqs)
+    cos_embd = np.cos(mutated_freqs)
+    return np.concatenate ([sin_embd, cos_embd], axis=1)
 
 
 
