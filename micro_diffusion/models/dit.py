@@ -42,6 +42,10 @@ class AttentionBlockPromptEmbedding(nn.Module):
         x = x + self.attn (self.ln1(x))
         x = x + self.ffn (self.ln2(x))
         return x
+    
+    def custom_init (self, init_std:float =0.02):
+        self.attn.custom_init(init_std=init_std)
+        self.ffn.custom_init(init_std=init_std)
 
     
 
@@ -63,3 +67,9 @@ class FeedForwardNetwork(nn.Module):
 
     def forward (self, x):
         return self.fc3 (F.silu(self.fc1(x)) * self.fc2(x))
+    
+    def custom_init (self, init_std:float):
+        nn.init.trunc_normal_(self.fc1.weight, mean=0.0, std=0.02)
+        for linear in (self.fc2, self.fc3):
+            nn.init.trunc_normal_(linear.weight, mean=0.0, std=init_std)
+    

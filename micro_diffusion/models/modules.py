@@ -67,6 +67,9 @@ class SelfAttention (nn.Module):
         y = self.proj (y) # (B, T, C)
         return y
     
+    def custom_init(self, init_std:float):
+        nn.init.trunc_normal_(self.attn.weight, mean=0.0, std=0.02)
+        nn.init.trunc_normal_(self.proj.weight, mean=0.0, std=init_std)
 
 class CrossAttention (nn.Module):
     # B T C text k v
@@ -124,6 +127,11 @@ class CrossAttention (nn.Module):
         y = y.transpose (1,2).contiguous().view(B, T, self.n_hidden) # (B, T, C')
         y = self.proj(y) # (B, T, C')-> (B, T, C)
         return y
+    
+    def custom_init(self, init_std: float)-> None:
+        for linear in (self.cx_attn_q, self.cx_attn_kv):
+            nn.init.trunc_normal_(linear.weight, mean=0.0, std=0.02)
+        nn.init.trunc_normal_(self.proj.weight, mean=0.0, std=init_std)
 
 
 class CaptionProjection (nn.Module):
