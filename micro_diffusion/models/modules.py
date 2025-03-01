@@ -320,14 +320,14 @@ def get_mask (batch, length, mask_ratio, device):
     length_keep = int (keep_ratio * length)
 
     # sample noise for randomized masking
-    noise = torch.rand (batch, length, device=device)
+    noise = torch.rand (batch, length, device=device) # (B, T)
     # Find indices that correspond to smaller noise along seq length
-    idx_ascending = torch.argsort (noise, dim = 1)
+    idx_ascending = torch.argsort (noise, dim = 1) # keep small, remove high
     # Find indices into idx_asc that yield original noise when indexed into noise
     # basically noise[idx_asc[idx_restore[0]]] gives the original value at 0 for the sampled noise
     idx_restore = torch.argsort (idx_ascending, dim = 1)
     # keep only unmasked indices
-    idx_keep = idx_ascending[:, :length_keep]
+    idx_keep = idx_ascending[:, :length_keep] # (B, input_to_DIT)
 
     mask = torch.ones (batch, length, device=device)
     mask[:, :length_keep] = 0
@@ -335,10 +335,39 @@ def get_mask (batch, length, mask_ratio, device):
     mask = torch.gather (mask, dim=1, index=idx_restore)
 
     return {
-        'mask' : mask,
-        'idx_keep' : idx_keep,
-        'idx_restore' : idx_restore
+        'mask' : mask,         # (B, T)
+        'idx_keep' : idx_keep, # (B, input_to_DIT=length_keep)
+        'idx_restore' : idx_restore # (B, T)
     }
+
+def mask_out_token (x, idx_keep):
+    """Mask out tokens specified by idx keep
+        idx_keep (B, length_keep)
+        x (B, T, C)
+    """
+    B, T, C = x.shape
+    # mutate idx_keep to preserve B, T and propagate it along all the n_embd dimensions
+    # idx_keep shape is [n] (n = DIT_in_length = 1- mask_ratio% of input tokens) 
+    gather_index = idx_keep.unsqueeze(-1).repeat(1, 1, C) # repeat (B, length_keep, 1) once along batch, once along T, n_embed times along C
+    x_masked = torch.gather (x, dim=1, index=gather_index) # gather_index (B, length_keep, C)
+    # x_masked will be B, DIT_in_length, C, which will be input to our DIT
+
+    return x_masked
+
+def insert_filler_masked_tokens(x:torch.Tensor, stub_token:torch.Tensor, idx_restore:torch.Tensor):
+    """
+        x -> B, keep_length, C
+        filler_mask_token -> 1, 1, C just a stub
+        idx_restore -> B, T (which indices to index into to get a sequence that respects original noise
+        which we sorted and selected first keep_length indices)
+    """
+    masked_out_length = idx_restore.shape[1]-x.shape[1] # the tokens that DIT doesnt even see, 75% of og tokens
+    filler_mask_tokens = stub_token.repeat (x.shape[0], masked_out_length, 1)
+    
+    x_og_kappa = torch.cat ((x, filler_mask_tokens), dim=1)
+    restore_gather_index = idx_restore.unsqueeze(-1).repeat(1, 1, x.shape[-1])
+    x_og_kappa = torch.gather (x_og_kappa, dim=1, index=restore_gather_index)
+    return x_og_kappa
 
 
 class MLP (nn.Module):
