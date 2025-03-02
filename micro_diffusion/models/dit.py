@@ -152,22 +152,120 @@ class DiTBlock (nn.Module):
         n_embd (int): Input and Output dimension of the block
         head_size (int) : Channels per attention head
         mlp_n_hidden_mult (float):  Multiplier for feed-forward network hidden dimension w.r.t input dimension
-        qkv_ratio (float): Ratio for dimension in qkv layers in attention block
+        qkv_n_hidden_mult (float): Multiplier for dimension in qkv layers in attention block
         hidden_base_mult (int): Round hidden dimension upto next nearest multiple of this value
-        pooled_emb_dim (int): Dimension of pooled caption embeddings
+        pooled_caption_n_embd (int): Dimension of pooled caption embeddings
         norm_eps (float): Epsilon for layer normalization
+        
+        Setting this flag true, respects depth of blocks and initalizes projection layer weights with respect to block
+        indices, to counteract effect of residual additions
+        better than GPT2, monolithic init through out network which doesnt respect depth of blocks
+
         depth_init (bool): Whether to initialize weights of the last layer in MLP/Attention block based on block index
-        layer_id (int): Index of this block in dit model
-        num_layers (int): total number of blocks in the dit model
-        compress_cx_attn (bool): whether to scale cross attention qkv dimension using qkv_ratio
+        
+        block_index (int): Index of this block in dit model, starts with 0
+        num_blocks (int): total number of blocks in the dit model
+        scale_cx_attn_n_hidden (bool): whether to scale cross attention qkv dimension using qkv_n_hidden_mult
         use_bias (bool) : whether to use bias in linear layers
-        moe_block (bool) : whether to use mixture of experts for MLP block
+        use_moe (bool) : whether to use mixture of experts for MLP block
         num_experts (int) : Number of experts if using MoE block
         expert_capacity (float) : Capacity factor for each expert if using MoE block
     """
-    
+
+    def __init__ (
+            self,
+            n_embd:int,
+            head_size:int,
+            mlp_n_hidden_mult:float,
+            qkv_n_hidden_mult:float,
+            hidden_base_mult:int,
+            pooled_caption_n_embd:int,
+            norm_eps:float,
+            depth_init:bool,
+            block_index:int,
+            num_blocks:int,
+            scale_cx_attn_n_hidden:bool,
+            use_bias:bool,
+            use_moe:bool,
+            num_experts:int,
+            expert_capacity:float
+    ):
+        super().__init__()
+        self.n_embd = n_embd
+
+        assert n_embd % head_size == 0, f"n_embd:{n_embd} is not divisible by head_size:{head_size}"
+
+        if qkv_n_hidden_mult == 1:
+            qkv_n_hidden = n_embd
+        else:
+            # round qkv_n_hidden up to be next nearest multiple of 2*head_size
+            # qkv_n_hidden % headsize = 0
+            qkv_n_hidden = 2*head_size* (( int (qkv_n_hidden_mult *n_embd) + (2*head_size) - 1) // (2*head_size))
         
 
+        self.ln1 = create_norm ("layernorm", n_embd, eps=norm_eps)
+        # self attention on token sequence input to DiT
+        self.attn = SelfAttention (n_embd, qkv_n_hidden // head_size, qkv_bias=use_bias, n_hidden=qkv_n_hidden, norm_eps=norm_eps)
+        self.ln2 = create_norm ("layernorm", dim=n_embd, eps=norm_eps)
+
+        # cross attention TODO: check if its done against time(noise) or caption embeddings
+        # TODO: cross attention (IF run on CAPTIONS has to have 0 contribution (use_bias=False) when caption set to 0 for CFG)
+        cx_attn_n_hidden = qkv_n_hidden if scale_cx_attn_n_hidden else n_embd
+        self.cx_attn = CrossAttention (n_embd=n_embd, n_head=cx_attn_n_hidden//head_size, n_hidden=cx_attn_n_hidden, norm_eps=norm_eps, qkv_bias=use_bias)
+
+        self.ln3 = create_norm ("layernorm", dim=n_embd, eps=norm_eps)
+
+        mlp_n_hidden = int (n_embd * mlp_n_hidden_mult)
+        self.mlp = (
+            FeedForwardECMoe (num_experts=num_experts, expert_capacity=expert_capacity, 
+                              n_embd=n_embd, n_hidden=mlp_n_hidden, 
+                              hidden_base_mult= hidden_base_mult) if use_moe else
+            FeedForwardNetwork (n_embd=n_embd, n_hidden=mlp_n_hidden, hidden_base_mult=hidden_base_mult, use_bias=use_bias)
+        )
+
+        self.AdaLN_modulation = nn.Sequential (
+            nn.GELU(approximate="tanh"),
+            nn.Linear (pooled_caption_n_embd, 6*n_embd)
+        )
+
+        # Equivalent to NANO_GPT_SCALE_INIT for projecting layers
+        # std dev from which projection layers weights are to be initated
+        # we hard code rest of the layers as 0.02
+        self.weight_init_std = (
+            0.02 / (3 * (block_index + 1)) ** 0.5 if depth_init else
+            0.02 / (3 * num_blocks) ** 0.5
+        )
+
+    #change name of args after setting up initial aggregation
+    # x is forward information stream
+    # c is aggregated caption and time to certain abstraction
+    # TODO: introspect later t is lets just say time (B, C) for now
+
+    def forward(self, x:torch.Tensor, c:torch.Tensor, t:torch.Tensor):
+        # extract 3 gamma, 3 beta from pooled caption embd?
+        # each has shape (B, C)
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp =self.AdaLN_modulation (t).split (self.n_embd, dim=-1) # split along 6c so we get 6 splits
+
+        # x (B, T, C) after modulation with scale (B, [1],C) and shift (B, [1], C) //[1] unsqueezed
+        # the shape of x is still (B, T, C) it needs to be gated with (B, [1], C) so that the shape will still be (B, T, C)
+        # B, T, C = B, 1, C * B, T, C
+        x = x + gate_msa.unqueeze(1) * self.attn(modulate( self.ln1(x), shift=shift_msa, scale=scale_msa))
+        x = x + self.cx_attn (self.ln2(x), c) # caption condition c already has extracted information from timestep at presetup
+        x = x + gate_mlp.unsqueeze(1)*self.mlp(modulate(self.ln3(x), shift=shift_mlp, scale=scale_mlp)) # (B, T, C)
+
+        return x # (B, T, C)
+    
+    def custom_init(self):
+        # reset affine parameters to 1 and 0 respectively
+        for norm in (self.ln1, self.ln2, self.ln3):
+            norm.reset_parameters()
+        
+        # initialize layers with HARDCODED calculate correct fan to keep exploding variance in check
+        # initalize projecting layers while taking into consideration the effect of residual additions
+        self.attn.custom_init(self.weight_init_std)
+        self.cx_attn.custom_init(self.weight_init_std)
+        self.mlp.custom_init(self.weight_init_std)
+    
 
 
 
