@@ -187,27 +187,27 @@ class T2IFinalLayer (nn.Module):
 
 class TimeStepEmbedder (nn.Module):
     """
-        Embeds scalar noise level sigma_t into n_t_embd dimensional vector using sinusoidal embeddings
-        then refines this n_t_embd dimensional vectors using MLP to prouce n_embd dimensional representation
+        Embeds scalar noise level sigma_t into freq_embd dimensional vector using sinusoidal embeddings
+        then refines this freq_embd dimensional vectors using MLP to prouce n_embd dimensional representation
         that is compatible with DiT
     """
 
-    def __init__ (self, sigma_t, n_t_embd, n_embd, activation):
-        self.sigma_t = sigma_t
-        self.n_t_embd = n_t_embd
-        self.n_embd = n_embd
+    def __init__ (self, n_hidden, activation, freq_embd:int = 512):
+        super().__init__()
+        self.freq_embd = freq_embd
+        self.n_hidden = n_hidden
         self.activation = activation
         self.mlp = nn.Sequential (
-            nn.Linear (n_t_embd, n_embd, bias=True),
+            nn.Linear (freq_embd, n_hidden, bias=True),
             self.activation,
-            nn.Linear (n_embd, n_embd, bias=True)
+            nn.Linear (n_hidden, n_hidden, bias=True)
         )
     
     @staticmethod
-    def embed_timestep (sigma_t, n_t_embd, max_period = 10000):
+    def embed_timestep (sigma_t, freq_embd, max_period = 10000):
         # half the time embedding dimensions will be cosine rest of half will be sine
-        # if n_t_embd is odd, then we append 0 frequency component to maintain consistency
-        half = n_t_embd // 2
+        # if freq_embd is odd, then we append 0 frequency component to maintain consistency
+        half = freq_embd // 2
 
         log_freqs = -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32, device=sigma_t.device)
         # now we have log_freqs in descending order, they start from 0 and grow negative as we move right
@@ -220,18 +220,18 @@ class TimeStepEmbedder (nn.Module):
         # note that we resort to exponential scale /decay to ensure wide range of dfs
         # df would be constant in linear scale
 
-        sigma_t = sigma_t.unsqueeze(1) #(1, 1)
+        sigma_t = sigma_t.unsqueeze(-1).float() #(1, 1)
         args = sigma_t * freqs # (1,1) * (half)
         # args is now (1, half)
-        # embedding vector thats n_t_embd long if n_t_embd is even
-        # otherwise its n_t_embd - 1
+        # embedding vector thats freq_embd long if freq_embd is even
+        # otherwise its freq_embd - 1
         embedding = torch.cat((torch.cos(args), torch.sin(args)), dim=-1)
 
-        if n_t_embd % 2 != 0:
-            # rectify the dimensionality of the embedding if n_t_embd was odd
-            # n_t_embd - 1 -> n_t_embd by appending 0 frequency component
+        if freq_embd % 2 != 0:
+            # rectify the dimensionality of the embedding if freq_embd was odd
+            # freq_embd - 1 -> freq_embd by appending 0 frequency component
             embedding = torch.cat((embedding, torch.zeros_like(embedding[:, 0])), dim=-1)
-        return embedding #(1, n_t_embd)
+        return embedding #(1, freq_embd)
 
     # return type of first parameter in this class
     @property
@@ -239,7 +239,7 @@ class TimeStepEmbedder (nn.Module):
         return next(self.parameters()).dtype
     
     def forward (self, sigma_t):
-        t_embedding = self.embed_timestep (sigma_t, self.n_t_embd).to(self.dtype)
+        t_embedding = self.embed_timestep (sigma_t, self.freq_embd).to(self.dtype)
         return self.mlp (t_embedding)
 
 
@@ -388,6 +388,11 @@ class MLP (nn.Module):
         self.fc2 = nn.Linear (config.fan_h, config.fan_out, bias=config.bias)
         # TODO: introspect for res con later
         #self.fc2.NANO_GPT_SCALE_INIT = 1
+        nn.init.trunc_normal_(self.fc1.weight, mean=0.0, std=0.02)
+        nn.init.trunc_normal_(self.fc2.weight, mean=0.0, std=0.02)
+        
+        if hasattr(self.mlp_norm, "reset_parameters"):
+            self.mlp_norm.reset_parameters()
 
     def forward (self, x: torch.Tensor)-> torch.Tensor:
         x = self.fc1(x)

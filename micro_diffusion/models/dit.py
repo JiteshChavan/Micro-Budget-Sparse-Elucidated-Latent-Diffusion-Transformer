@@ -1,7 +1,9 @@
 from typing import List
-from .modules import CaptionProjection, CrossAttention, MLP, MLPConfig, SelfAttention, T2IFinalLayer, TimeStepEmbedder
-from .modules import create_norm, get_2d_sincos_pos_embed, get_mask, mask_out_token, modulate, insert_filler_masked_tokens
-
+# this works only if DaVinci is set in pythonpath
+# dont do .modules
+from modules import CaptionProjection, CrossAttention, MLP, MLPConfig, SelfAttention, T2IFinalLayer, TimeStepEmbedder
+from modules import create_norm, get_2d_sincos_pos_embed, get_mask, mask_out_token, modulate, insert_filler_masked_tokens
+from modules import MLPConfig
 
 import torch
 import torch.nn as nn
@@ -9,6 +11,7 @@ import torch.nn.functional as F
 
 import numpy as np
 from timm.models.vision_transformer import PatchEmbed
+
 
 class AttentionBlockPromptEmbedding(nn.Module):
     """Attention block specifically for processing prompt embeddings.
@@ -164,10 +167,10 @@ class DiTBlock (nn.Module):
         depth_init (bool): Whether to initialize weights of the last layer in MLP/Attention block based on block index
         
         block_index (int): Index of this block in dit model, starts with 0
-        num_blocks (int): total number of blocks in the dit model
+        num_blocks_for_weight_init (int): total number of blocks in the dit model
         scale_cx_attn_n_hidden (bool): whether to scale cross attention qkv dimension using qkv_n_hidden_mult
         use_bias (bool) : whether to use bias in linear layers
-        use_moe (bool) : whether to use mixture of experts for MLP block
+        is_moe (bool) : whether to use mixture of experts for MLP block
         num_experts (int) : Number of experts if using MoE block
         expert_capacity (float) : Capacity factor for each expert if using MoE block
     """
@@ -183,10 +186,10 @@ class DiTBlock (nn.Module):
             norm_eps:float,
             depth_init:bool,
             block_index:int,
-            num_blocks:int,
+            num_blocks_for_weight_init:int,
             scale_cx_attn_n_hidden:bool,
             use_bias:bool,
-            use_moe:bool,
+            is_moe:bool,
             num_experts:int,
             expert_capacity:float
     ):
@@ -219,7 +222,7 @@ class DiTBlock (nn.Module):
         self.mlp = (
             FeedForwardECMoe (num_experts=num_experts, expert_capacity=expert_capacity, 
                               n_embd=n_embd, n_hidden=mlp_n_hidden, 
-                              hidden_base_mult= hidden_base_mult) if use_moe else
+                              hidden_base_mult= hidden_base_mult) if is_moe else
             FeedForwardNetwork (n_embd=n_embd, n_hidden=mlp_n_hidden, hidden_base_mult=hidden_base_mult, use_bias=use_bias)
         )
 
@@ -233,7 +236,7 @@ class DiTBlock (nn.Module):
         # we hard code rest of the layers as 0.02
         self.weight_init_std = (
             0.02 / (3 * (block_index + 1)) ** 0.5 if depth_init else
-            0.02 / (3 * num_blocks) ** 0.5
+            0.02 / (3 * num_blocks_for_weight_init) ** 0.5 # GPT 2 style
         )
 
     #change name of args after setting up initial aggregation
@@ -265,7 +268,124 @@ class DiTBlock (nn.Module):
         self.attn.custom_init(self.weight_init_std)
         self.cx_attn.custom_init(self.weight_init_std)
         self.mlp.custom_init(self.weight_init_std)
+
+class DiT(nn.Module):
+    """
+    Diffusion Transformer (DiT) model that supports conditioning on caption embeddings for text-to-image generation.
     
+    Args:
+        input_size (int, default: 32): Size of input image (assumed square)
+        patch_size (int, default: 2): Size of patches for patch embedding
+        in_channels (int, default: 4): Number of input image channels (by default assuming four channel latent space)
+        n_embd (int, default: 1152): Embedding Dimension of transformer backbone, i.e., dimension of major transformer layers
+        depth (int, default: 28): Number of transformer blocks
+        head_size (int, default: 64): Channels per attention head
+        n_hidden_base_mult (int, default: 256): Round n_hidden up to nearest multiple of this value in MLP block
+        caption_n_embd (int, default: 1024): Number of channels in caption embeddings
+        pos_interp_scale (float, default: 1.0): Scale for positional embedding interpolation (1.0 for 256x256, 2.0 for 512x512)
+        norm_eps (float, default: 1e-6): Epsilon for layer normalization
+        depth_init (bool, default: True): Whether to use depth-dependent initialization in DiT blocks
+        qkv_multipliers (List[float], default: [1.0]): Multipliers for QKV projection dimensions in DiT blocks
+        ffn_multipliers (List[float], default: [4.0]): Multipliers for FFN hidden dimensions in DiT blocks
+        use_patch_mixer (bool, default: True): Whether to use patch mixer layers
+        patch_mixer_depth (int, default: 4): Number of patch mixer blocks
+        patch_mixer_dim (int, default: 512): Dimension of patch-mixer layers
+        patch_mixer_qkv_ratio (float, default: 1.0): Multipliers for QKV projection dimensions in patch-mixer blocks
+        patch_mixer_mlp_ratio (float, default: 1.0): Multipliers for FFN hidden dimensions in patch-mixer blocks
+        use_bias (bool, default: True): Whether to use bias in linear layers
+        num_experts (int, default: 8):  Number of experts if using MoE block
+        expert_capacity (int, default: 1): Capacity factor for each expert if using MoE FFN layers
+        experts_every_n (int, default: 2): Add MoE FFN layers every n blocks
+    """
+
+    def __init__ (
+            self,
+            input_res :int = 32,
+            patch_size:int = 2, #ViT/DiT patch size
+            in_channels:int = 4,
+            n_embd:int = 1152, # n_embd of transformer backbone
+            depth:int = 28, # number of DiT blocks in transformer
+            head_size:int = 64, # channels per attention head
+            n_hidden_base_mult:int = 256, # round up the n_hidden of backbone to nearest multiple of this
+            caption_n_embd:int = 1024,
+            pos_interp_scale:float = 1.0,
+            norm_eps:float = 1e-6,
+            depth_init:bool=True,
+            qkv_dim_multipliers:List[float] = [1.0],
+            ffn_dim_multipliers:List[float] = [4.0],
+            use_patch_mixer: bool = True,
+            patch_mixer_depth: int = 4,
+            patch_mixer_dim: int=512,
+            patch_mixer_qkv_dim_mult:float=1.0,
+            patch_mixer_mlp_dim_mult:float=1.0,
+            use_bias:bool=True,
+            num_experts:int=8,
+            expert_capacity:float=1.0, # scale multiplier on tokens_per_expert
+            experts_every_n:int = 2
+    ):
+        super().__init__()
+        self.input_res = input_res
+        self.in_channels = in_channels
+        self.out_channels = in_channels
+        self.patch_size = patch_size
+        self.head_size = head_size
+        self.pos_interp_scale = pos_interp_scale
+        self.use_patch_mixer = use_patch_mixer
+
+        self.x_embedder = PatchEmbed (input_res, patch_size, in_channels, n_embd, bias=True) # 32x32x4->16x16x1152
+        self.t_emebedder = TimeStepEmbedder (n_embd, nn.GELU(approximate="tanh"))
+
+        # get number of patches from x_embedder (32x32->16x16 with patchsize 2)
+        num_patches = self.x_embedder.num_patches
+
+        # calculate base size to feed into position embedding function
+        self.base_size = input_res // self.patch_size
+        self.register_buffer("pos_embed", torch.zeros(1, num_patches, n_embd))
+
+        # non linearity in config if nn.GELU(tanh) by default
+        caption_embedder_config = MLPConfig (fan_in=caption_n_embd, fan_h=n_embd, fan_out=n_embd, norm_layer=create_norm("layernorm", n_embd, eps=norm_eps))
+        self.caption_embedder = CaptionProjection (caption_embedder_config)
+
+        # refine /pool/aggregate information in caption embedding
+        self.caption_embedding_attention = AttentionBlockPromptEmbedding (
+            n_embd, head_size, 4.0, n_hidden_base_mult, norm_eps, use_bias=use_bias
+        )
+
+        # process the aggregated information in caption embedding
+        # non linearity in config if nn.GELU(tanh) by default
+        process_pooled_caption_mlp_config = MLPConfig (n_embd, n_embd, n_embd, norm_layer=create_norm("layernorm", n_embd, eps=norm_eps))
+        self.process_pooled_caption_embedding = MLP (process_pooled_caption_mlp_config)
+
+        if self.use_patch_mixer:
+            # [0 dense, 1 sparse, 2 dense, 3 sparse]
+            expert_blocks_idx = [
+                i for i in range(patch_mixer_depth) if i % experts_every_n != 0
+            ]
+
+            is_moe_block = [
+                True if i in expert_blocks_idx else False for i in range (patch_mixer_depth)
+            ]
+
+            self.patch_mixer = nn.ModuleList([
+                DiTBlock (
+                    n_embd=patch_mixer_dim,
+                    head_size=head_size,
+                    mlp_n_hidden_mult=patch_mixer_mlp_dim_mult,
+                    qkv_n_hidden_mult=patch_mixer_qkv_dim_mult,
+                    hidden_base_mult=n_hidden_base_mult, # for MLP, attention layers always have 2*head_size base mult
+                    pooled_caption_n_embd=n_embd,
+                    norm_eps=norm_eps,
+                    depth_init=False,
+                    block_index=0, # doesnt affect weight init (intended to count prior inclusive residual additions), since depth_init is false for patch_mixer
+                    num_blocks_for_weight_init=depth,
+                    scale_cx_attn_n_hidden=False, # dont scale cx_attn_qkv channels for patch mixer
+                    use_bias=use_bias,
+                    is_moe=is_moe_block[i],
+                    num_experts=num_experts,
+                    expert_capacity=expert_capacity
+                ) for i in range(patch_mixer_depth)
+            ])
+
 
 
 
