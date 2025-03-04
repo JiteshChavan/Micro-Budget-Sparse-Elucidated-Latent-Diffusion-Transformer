@@ -179,7 +179,7 @@ class T2IFinalLayer (nn.Module):
     """
     def forward (self, x, time_embd):
         # get scale and shift from adaLN depending on current timestep
-        shift, scale = self.adaLN_modulation (time_embd).split(self.n_hidden, dim=1)
+        shift, scale = self.adaLN_modulation (time_embd).split(self.n_hidden, dim=-1)
         # normalize then modulate x with respect to current time step
         x = modulate (self.norm_final(x), shift=shift, scale=scale)
         x = self.linear(x)
@@ -331,6 +331,7 @@ def get_mask (batch, length, mask_ratio, device):
     noise = torch.rand (batch, length, device=device) # (B, T)
     # Find indices that correspond to smaller noise along seq length
     idx_ascending = torch.argsort (noise, dim = 1) # keep small, remove high
+
     # Find indices into idx_asc that yield original noise when indexed into noise
     # basically noise[idx_asc[idx_restore[0]]] gives the original value at 0 for the sampled noise
     idx_restore = torch.argsort (idx_ascending, dim = 1)
@@ -362,7 +363,7 @@ def mask_out_token (x, idx_keep):
 
     return x_masked
 
-def insert_filler_masked_tokens(x:torch.Tensor, stub_token:torch.Tensor, idx_restore:torch.Tensor):
+def fill_out_masked_tokens(x:torch.Tensor, stub_token:torch.Tensor, idx_restore:torch.Tensor):
     """
         x -> B, keep_length, C
         filler_mask_token -> 1, 1, C just a stub

@@ -2,7 +2,7 @@ from typing import List
 # this works only if DaVinci is set in pythonpath
 # dont do .modules
 from modules import CaptionProjection, CrossAttention, MLP, MLPConfig, SelfAttention, T2IFinalLayer, TimeStepEmbedder
-from modules import create_norm, get_2d_sincos_pos_embed, get_mask, mask_out_token, modulate, insert_filler_masked_tokens
+from modules import create_norm, get_2d_sincos_pos_embed, get_mask, mask_out_token, modulate, fill_out_masked_tokens
 from modules import MLPConfig
 
 import torch
@@ -157,7 +157,7 @@ class DiTBlock (nn.Module):
         mlp_n_hidden_mult (float):  Multiplier for feed-forward network hidden dimension w.r.t input dimension
         qkv_n_hidden_mult (float): Multiplier for dimension in qkv layers in attention block
         hidden_base_mult (int): Round hidden dimension upto next nearest multiple of this value
-        pooled_caption_n_embd (int): Dimension of pooled caption embeddings
+        modulated_sigma_t_embd (int): Dimension of pooled caption embeddings
         norm_eps (float): Epsilon for layer normalization
         
         Setting this flag true, respects depth of blocks and initalizes projection layer weights with respect to block
@@ -182,7 +182,7 @@ class DiTBlock (nn.Module):
             mlp_n_hidden_mult:float,
             qkv_n_hidden_mult:float,
             hidden_base_mult:int,
-            pooled_caption_n_embd:int,
+            modulated_sigma_t_embd:int,
             norm_eps:float,
             depth_init:bool,
             block_index:int,
@@ -228,7 +228,7 @@ class DiTBlock (nn.Module):
 
         self.AdaLN_modulation = nn.Sequential (
             nn.GELU(approximate="tanh"),
-            nn.Linear (pooled_caption_n_embd, 6*n_embd)
+            nn.Linear (modulated_sigma_t_embd, 6*n_embd)
         )
 
         # Equivalent to NANO_GPT_SCALE_INIT for projecting layers
@@ -352,7 +352,7 @@ class DiT(nn.Module):
         )
 
         # process the aggregated information in caption embedding
-        # non linearity in config if nn.GELU(tanh) by default
+        # non linearity in config is nn.GELU(tanh) by default
         process_pooled_caption_mlp_config = MLPConfig (n_embd, n_embd, n_embd, norm_layer=create_norm("layernorm", n_embd, eps=norm_eps))
         self.process_pooled_caption_embedding = MLP (process_pooled_caption_mlp_config)
 
@@ -362,10 +362,12 @@ class DiT(nn.Module):
                 i for i in range(patch_mixer_depth) if i % experts_every_n != 0
             ]
 
+            # construct bool flags for use moe using the list above
             is_moe_block = [
                 True if i in expert_blocks_idx else False for i in range (patch_mixer_depth)
             ]
 
+            # Patch Mixer
             self.patch_mixer = nn.ModuleList([
                 DiTBlock (
                     n_embd=patch_mixer_dim,
@@ -373,7 +375,7 @@ class DiT(nn.Module):
                     mlp_n_hidden_mult=patch_mixer_mlp_dim_mult,
                     qkv_n_hidden_mult=patch_mixer_qkv_dim_mult,
                     hidden_base_mult=n_hidden_base_mult, # for MLP, attention layers always have 2*head_size base mult
-                    pooled_caption_n_embd=n_embd,
+                    modulated_sigma_t_embd=n_embd,
                     norm_eps=norm_eps,
                     depth_init=False,
                     block_index=0, # doesnt affect weight init (intended to count prior inclusive residual additions), since depth_init is false for patch_mixer
@@ -382,14 +384,185 @@ class DiT(nn.Module):
                     use_bias=use_bias,
                     is_moe=is_moe_block[i],
                     num_experts=num_experts,
-                    expert_capacity=expert_capacity
+                    expert_capacity=expert_capacity # float
                 ) for i in range(patch_mixer_depth)
             ])
 
+            # projection layers
+            if patch_mixer_dim != n_embd:
+                # project image to patch_mixer n_embd for processing
+                self.project_image_to_patch_mixer_embd = nn.Sequential (
+                    create_norm("layernorm", n_embd, eps=norm_eps),
+                    nn.Linear(n_embd, patch_mixer_dim, bias=use_bias)
+                )
+
+                self.project_patch_mixer_to_backbone_embd = nn.Sequential (
+                    create_norm("layernorm", patch_mixer_dim, eps=norm_eps),
+                    nn.Linear(patch_mixer_dim, n_embd, bias=use_bias)
+                )
+
+                self.project_caption_to_patch_mixer_embd = nn.Sequential (
+                    create_norm("layernorm", n_embd, eps=norm_eps),
+                    nn.Linear (n_embd, patch_mixer_dim, bias=use_bias)
+                )
+
+            else:
+                self.project_image_to_patch_mixer_embd = nn.Identity()
+                self.project_patch_mixer_to_backbone_embd = nn.Identity()
+                self.project_caption_to_patch_mixer_embd = nn.Identity()
+            
+            # make sure that number of ffn_multipliers is equal to number of qkv attention dim multipliers
+            # implicit condition to make sure that number of ffn layers is equal to number of attention layers
+            # these lists are used for layerwise scaling
+            assert (len(ffn_dim_multipliers) == len(qkv_dim_multipliers))
+            # if we have one layerwise scaling multiplier for each layer
+            if len(ffn_dim_multipliers) == depth:
+                # we proceed with the lists as is
+                qkv_fan_h_mults = qkv_dim_multipliers
+                mlp_fan_h_mults = ffn_dim_multipliers
+            else:
+                # each layer doesnt have its own multiplier
+                # distribute multipliers equally across splits
+                # if we have just 2 multipliers, there will be just 2 splits
+                num_splits = len (ffn_dim_multipliers)
+
+                assert (depth % num_splits == 0), f"Depth(number of blocks):{depth} should be divisible by number of splits:{num_splits}"
+
+                depth_per_split = depth // num_splits
+
+                qkv_fan_h_mults = list(np.array([[m]*depth_per_split for m in qkv_dim_multipliers]).reshape(-1))
+                mlp_fan_h_mults = list(np.array([[m]*depth_per_split for m in ffn_dim_multipliers]).reshape(-1))
+
+            # now qkv/mlp_fan_h_mults have depth multipliers for layerwise scaling
+            
+            # don't use MoE in last block
+            # list looks like (1, 3, 5.....25)
+            expert_blocks_idx = [i for i in range(depth-1) if i % experts_every_n != 0]
+            # list looks like (Dense, Sparse, .... Dense, Dense)
+            is_moe_block = [ (True if i in expert_blocks_idx else False) for i in range(depth)]
+
+            self.backbone = nn.ModuleList([
+                DiTBlock (
+                   n_embd=n_embd,
+                   head_size=head_size,
+                   mlp_n_hidden_mult=mlp_fan_h_mults[i],
+                   qkv_n_hidden_mult= qkv_fan_h_mults[i],
+                   hidden_base_mult=n_hidden_base_mult, # used only for MLP FFN, attention layers always use basemult of 2xHead_Size
+                   modulated_sigma_t_embd=caption_n_embd,
+                   norm_eps=norm_eps,
+                   depth_init=depth_init,
+                   block_index=i,
+                   num_blocks_for_weight_init=depth,
+                   scale_cx_attn_n_hidden=False,
+                   use_bias=use_bias,
+                   is_moe=is_moe_block[i],
+                   num_experts=num_experts,
+                   expert_capacity=expert_capacity
+                )for i in range(depth)
+            ])
+
+            self.register_buffer ("mask_token", torch.zeros(1, 1, patch_size**2 *self.out_channels))
+
+            self.final_layer = T2IFinalLayer (
+                n_embd,
+                n_embd,
+                patch_size,
+                self.out_channels,
+                nn.GELU(approximate='tanh'),
+                create_norm("layernorm", n_embd, eps=norm_eps)
+            )
+            self.initialize_weights()
 
 
+    def forward_without_cfg (
+            self,
+            x: torch.Tensor,
+            sigma_t: torch.Tensor,
+            c : torch.Tensor, # caption
+            mask_ratio : float = 0,
+            **kwargs
+    )->dict:
+        """Forward pass without classifier free guidance.
+        
+        Args:
+        x: Input tensor of shape (B, C, H, W)
+        t: sigma_t noise/time tensor of shape (B,)
+        y: Caption embedding tensor of shape (B, 1, seq_len, caption_embd) (B, 1, 77, 1024)
+        mask_ratio: Ratio of patches to mask during training (between 0 and 1)
 
+        Returns:
+        dict: Dictionary containing:
+            - 'sample': Output tensor of shape (batch_size, out_channels, height, width)
+            - 'mask': Optional binary mask tensor, if masking was applied else None
+        """
+        B, C, H, W = x.shape
+        self.h = H // self.patch_size # 32/2 = 16
+        self.W = W // self.patch_size # 32/2 = 16
 
+        # self.pos_embed is initialized during weight_init 
+        x = self.x_embedder(x) + self.pos_embed  # (B, 256, 1152) + (1, 256, 1152) (pos_embed is a register_buffer) 
+        
+        # sigma_t noise tensor expanded across entire batch -> (B)
+        # and then embed using sincos embedding processed by linear-acitvation-linear to yield
+        # B, C embedding
+        sigma_t = self.t_emebedder(sigma_t.expand(x.shape[0])) #(B, C)
+
+        c = self.caption_embedder (c) # (B, 1, L, 1024) -> (B, 1, L, n_embd=1152), suprious dimension because thats how we wrote the forward pass of openclip encoder
+
+        # Aggregate/refine information in caption embedding using Multi Headed Attention
+        c = self.caption_embedding_attention(c.squeeze(dim=1)).unsqueeze(dim=1) # (B, 1, L, n_embd=1152) -> (B, 1, L, n_embd=1152)
+        
+        # Inject caption information into time/noise
+        # pool information of all tokens in caption
+        pooled_caption = c.mean(dim=-2).squeeze(dim=1) # (B, 1, L, C) -> (B, 1, C)
+        # refine information with mlp
+        pooled_caption = self.process_pooled_caption_embedding (pooled_caption) # (B, 1, C)
+        
+        # modulated noise level and caption information
+        modulated_sigma_t = sigma_t + pooled_caption
+
+        
+        if self.use_patch_mixer:
+            x = self.project_image_to_patch_mixer_embd(x)
+            c_mixer = self.project_caption_to_patch_mixer_embd(c)
+            # no need to project modulated_sigma_t to patch_mixer_embd since we just get affine parameters of appropriate embd 
+            # from it using a adaln layer.
+            for block in self.patch_mixer:
+                x = block (x, c_mixer, modulated_sigma_t) # (B, T, patch_mixer_embd)
+        
+        mask = None
+        if mask_ratio > 0:
+            mask_dict = get_mask(
+                x.shape[0], x.shape[1], device=x.device
+            )
+        idx_keep = mask_dict['idx_keep'] # (B, 0.25T)
+        idx_restore = mask_dict['idx_restore'] # (B, T)
+        mask = mask_dict['mask'] # (B, T)
+
+        x = mask_out_token(x, idx_keep) # (B, 0.25T, C) if masking ratio is 0.75
+
+        if self.use_patch_mixer:
+            # project back to backbone embd from patch_mixer_dim (or patch_mixer_embd)
+            # after masking out, to save compute
+            x = self.project_patch_mixer_to_backbone_embd (x)
+        
+        for block in self.backbone:
+            x = block(x=x, c=c, t=modulated_sigma_t) # (B, 0.25T, C)
+        
+        # unmask fill in zero stubs B T,C
+
+        # tokenToImageLayer
+        x = self.final_layer (x) # (B, 0.25T, patch_size**2 C) we dont project back to vae latent dim yet
+
+        if mask_ratio > 0:
+            x = fill_out_masked_tokens (x, self.mask_token, idx_restore=idx_restore) # fill out stubs with 1, 1, patchsize**2C
+        
+        x = self.unpatchify(x) # (B, out_channels, H, W)
+
+        return {'sample':x, 'mask':mask} # x (B, 4, H, W) mask: (B, T)
+        
+
+        
 
 
 

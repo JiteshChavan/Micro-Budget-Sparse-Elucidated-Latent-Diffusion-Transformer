@@ -222,8 +222,8 @@ class LatentDiffusion (ComposerModel):
         
         # TODO: introspect: I think we finetune on 0 mask ratio after pretraining
         if mask_ratio > 0:
-            # if image_latents were masked before feeding to DiT to reduce input seq length to
-            # transformer, the 8x8 has to be converted to 32x32 then fed into VAE decoder
+            # if image_latents were masked before feeding to DiT to reduce input seq length to DiT
+            # then we have to accomodate the loss thats relevant only to active tokens (unmasked tokens)
 
             assert (self.dit.training and 'mask' in model_out), f"Masking is only done during training"
             loss = loss.mean(dim=1) # mean along channels shape will be (B, 32, 32) = (B, H, W)
