@@ -180,6 +180,8 @@ class LatentDiffusion (ComposerModel):
         # sigma_t shape (B, 1, 1, 1)
         c_noise = sigma_t.log() / 4 # (B, 1, 1, 1)
 
+        # cfg defaults to 1.0 implying we always do forward without cfg,
+        # but we drop captions in training set
         out = model_forward_fxn (
             (c_in * x).to(x.dtype),
             c_noise.flatten(), # TODO: introspect later (B)
@@ -270,7 +272,12 @@ class LatentDiffusion (ComposerModel):
     def edm_sampler_loop(self, x:torch.Tensor, y:torch.Tensor, steps: Optional[int] = None, cfg: float = 1.0, **kwargs)->torch.Tensor:
         # no masking during inference
         mask_ratio = 0
-        # we have to forward model twice for CFG, once with conditioning, once without
+        # create new callable entity.
+        # nothing fancy about partial keyword
+
+        # we use forward with cfg in sampling
+        # model has learned to handle both conditional and unconditional in training so we do both
+        # interpolate with the CFG formula, during sampling inference
         model_forward_fxn = (partial(self.dit.forward, cfg=cfg) if cfg > 1.0 else self.dit.forward)
 
         # timestep discretization
@@ -325,6 +332,7 @@ class LatentDiffusion (ComposerModel):
             
             # Euler step.
             # x_t is signal with decayed stochastic noise injection
+            # no need to pass CFG again since we already preset it in the "Partial " statement
             x0_approx = self.model_forward_wrapper (
                 x_t.to(torch.float32),
                 sigma_t_hat.to (torch.float32),
@@ -422,7 +430,7 @@ class LatentDiffusion (ComposerModel):
 def create_latent_diffusion (
         vae_name: str = 'stabilityai/stable-diffusion-xl-base-1.0',
         text_encoder_name: str = 'openclip:hf-hub:apple/DFN5B-CLIP-ViT-H-14-378',
-        dit_arch: str = "MicroDiT_XL_2",
+        dit_arch: str = "MicroDiT_XL",
         latent_res: int = 32,
         in_channels: int = 4,
         pos_interp_scale: float = 1.0,

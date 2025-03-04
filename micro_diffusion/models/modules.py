@@ -163,13 +163,14 @@ class T2IFinalLayer (nn.Module):
 
     """
     # cant hardcode n_hidden because layerwise scaling increases dit n_embd as we progress through the network
-    def __init__(self, n_hidden, patch_size, fan_out, activation, norm_final):
+    def __init__(self, n_embd, sigma_t_embd, patch_size, fan_out, activation, norm_final):
         super().__init__()
-        self.n_hidden = n_hidden
-        self.linear = nn.Linear (n_hidden, patch_size*patch_size*fan_out)
+        self.n_embd = n_embd
+        self.sigma_t_embd = sigma_t_embd
+        self.linear = nn.Linear (n_embd, patch_size*patch_size*fan_out)
         self.adaLN_modulation = nn.Sequential (
             activation,
-            nn.Linear (n_hidden, 2 * n_hidden)
+            nn.Linear (sigma_t_embd, 2 * n_embd)
         )
         self.norm_final = norm_final
     """
@@ -179,7 +180,7 @@ class T2IFinalLayer (nn.Module):
     """
     def forward (self, x, time_embd):
         # get scale and shift from adaLN depending on current timestep
-        shift, scale = self.adaLN_modulation (time_embd).split(self.n_hidden, dim=-1)
+        shift, scale = self.adaLN_modulation (time_embd).split(self.n_embd, dim=-1)
         # normalize then modulate x with respect to current time step
         x = modulate (self.norm_final(x), shift=shift, scale=scale)
         x = self.linear(x)
@@ -278,13 +279,14 @@ def get_2d_sincos_pos_embed (
         # stack along axis 0 to get two matrices, first for width co-ordinates second for height co-ordinates
 
         grid = np.stack (grid, axis=0) # (2, grid_size[1], grid_size[0]) (2, W, H)
+        # make (2,1,W,H)
         grid = grid.reshape (2, 1, grid_size[1], grid_size[0]) # add spurious dimension to be processed by get_embedding function
 
         pos_embedding = get_2d_sinusoidal_embedding_from_grid (n_embd, grid)
         if cls_token and extra_tokens > 0:
             pos_embedding = np.concatenate ([np.zeros([extra_tokens, n_embd]), pos_embedding], axis=0)
         
-        return pos_embedding
+        return pos_embedding # (HW, n_embd)
 
 def get_2d_sinusoidal_embedding_from_grid (n_embd, grid):
     "Takes in a grid (2, 1, W, H), generates 2D embedding for the said grid"
