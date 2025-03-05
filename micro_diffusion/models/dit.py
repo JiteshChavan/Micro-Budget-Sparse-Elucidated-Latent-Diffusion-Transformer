@@ -1,9 +1,9 @@
 from typing import List
 # this works only if DaVinci is set in pythonpath
 # dont do .modules
-from modules import CaptionProjection, CrossAttention, MLP, MLPConfig, SelfAttention, T2IFinalLayer, TimeStepEmbedder
-from modules import create_norm, get_2d_sincos_pos_embed, get_mask, mask_out_token, modulate, fill_out_masked_tokens
-from modules import MLPConfig
+from micro_diffusion.models.modules import CaptionProjection, CrossAttention, MLP, MLPConfig, SelfAttention, T2IFinalLayer, TimeStepEmbedder
+from micro_diffusion.models.modules import create_norm, get_2d_sincos_pos_embed, get_mask, mask_out_token, modulate, fill_out_masked_tokens
+from micro_diffusion.models.modules import MLPConfig
 
 import torch
 import torch.nn as nn
@@ -86,6 +86,7 @@ class FeedForwardECMoe (nn.Module):
     """
 
     def __init__(self, num_experts, expert_capacity:float, n_embd, n_hidden, hidden_base_mult):
+        super().__init__()
         self.num_experts = num_experts
 
         # scaling that restricts or boosts capacity of an expert (eg: 0.5x or 1.5x) we default to 1.0 I think
@@ -248,11 +249,10 @@ class DiTBlock (nn.Module):
         # extract 3 gamma, 3 beta from pooled caption embd?
         # each has shape (B, C)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp =self.AdaLN_modulation (t).split (self.n_embd, dim=-1) # split along 6c so we get 6 splits
-
         # x (B, T, C) after modulation with scale (B, [1],C) and shift (B, [1], C) //[1] unsqueezed
         # the shape of x is still (B, T, C) it needs to be gated with (B, [1], C) so that the shape will still be (B, T, C)
         # B, T, C = B, 1, C * B, T, C
-        x = x + gate_msa.unqueeze(1) * self.attn(modulate( self.ln1(x), shift=shift_msa, scale=scale_msa))
+        x = x + gate_msa.unsqueeze(1) * self.attn(modulate( self.ln1(x), shift=shift_msa, scale=scale_msa))
         x = x + self.cx_attn (self.ln2(x), c) # caption condition c already has extracted information from timestep at presetup
         x = x + gate_mlp.unsqueeze(1)*self.mlp(modulate(self.ln3(x), shift=shift_mlp, scale=scale_mlp)) # (B, T, C)
 
@@ -485,7 +485,7 @@ class DiT(nn.Module):
                 mlp_n_hidden_mult=mlp_fan_h_mults[i],
                 qkv_n_hidden_mult= qkv_fan_h_mults[i],
                 hidden_base_mult=n_hidden_base_mult, # used only for MLP FFN, attention layers always use basemult of 2xHead_Size
-                modulated_sigma_t_embd=caption_n_embd, # modulated_sigma_t embd to get scale shift gate for attn and mlp (each shape n_embd)
+                modulated_sigma_t_embd=n_embd, # modulated_sigma_t embd to get scale shift gate for attn and mlp (each shape n_embd)
                 norm_eps=norm_eps,
                 depth_init=depth_init,
                 block_index=i + patch_mixer_depth,
@@ -573,11 +573,11 @@ class DiT(nn.Module):
             mask_dict = get_mask(
                 x.shape[0], x.shape[1], device=x.device
             )
-        idx_keep = mask_dict['idx_keep'] # (B, 0.25T)
-        idx_restore = mask_dict['idx_restore'] # (B, T)
-        mask = mask_dict['mask'] # (B, T)
+            idx_keep = mask_dict['idx_keep'] # (B, 0.25T)
+            idx_restore = mask_dict['idx_restore'] # (B, T)
+            mask = mask_dict['mask'] # (B, T)
 
-        x = mask_out_token(x, idx_keep) # (B, 0.25T, C) if masking ratio is 0.75
+            x = mask_out_token(x, idx_keep) # (B, 0.25T, C) if masking ratio is 0.75
 
         if self.use_patch_mixer:
             # project back to backbone embd from patch_mixer_dim (or patch_mixer_embd)
@@ -596,7 +596,7 @@ class DiT(nn.Module):
             for block in self.patch_demixer:
                 x= block (x=x, c=c_mixer, t=modulated_sigma_t) 
         
-        x = self.final_layer (x) # (B, 0.25T, patch_size**2 C) # project back to out.channels
+        x = self.final_layer (x, modulated_sigma_t) # (B, 0.25T, patch_size**2 C) # project back to out.channels
 
         if mask_ratio > 0:
             x = fill_out_masked_tokens (x, self.mask_token, idx_restore=idx_restore) # fill out stubs with 1, 1, patchsize**2 C
@@ -709,7 +709,7 @@ class DiT(nn.Module):
         self.caption_embedding_attention.custom_init()
         # set contribution of these projection layers to be 0 initially
         nn.init.constant_(self.caption_embedding_attention.attn.proj.weight, 0)
-        nn.init.constant_(self.caption_embedding_attention.ffn.fc3, 0)
+        nn.init.constant_(self.caption_embedding_attention.ffn.fc3.weight, 0)
 
         # zero-out output layers
         nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)

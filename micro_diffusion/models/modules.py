@@ -245,11 +245,9 @@ class TimeStepEmbedder (nn.Module):
 
 
 def ntuple(n_dim :int, x):
+    assert isinstance(n_dim, int) and isinstance(n_dim, int)
     """ Converts input into n_dim-tuple. For handling resolutions"""
-    if isinstance(x, Iterable) and not isinstance(x, str):
-        return tuple(x)
-    else:
-        return tuple(repeat(x, n_dim))
+    return tuple(repeat(x, n_dim))
 
 def get_2d_sincos_pos_embed (
         n_embd, 
@@ -261,7 +259,7 @@ def get_2d_sincos_pos_embed (
         """ One spot / pixel in grid is represented by n_embd channels, n_embd/2 come from scaled x
             coordinate, n_embd/2 come from scaled y co-ordinate
         """
-        if isinstance(grid_size, Iterable) and not isinstance(grid_size, str):
+        if isinstance(grid_size, int):
             grid_size = ntuple (2, grid_size)
         # interpolate position embeddings to adapt model to different resolutions.
         # makes it so that specific spatial positions have similar embeddings

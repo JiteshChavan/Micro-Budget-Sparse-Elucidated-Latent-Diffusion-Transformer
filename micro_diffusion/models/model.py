@@ -435,7 +435,7 @@ def create_latent_diffusion (
         in_channels: int = 4,
         pos_interp_scale: float = 1.0,
         dtype: str = 'bfloat16',
-        precomputed_latents: bool = True,
+        latents_precomputed : bool = True,
         p_mean: float = -0.6,
         p_std: float = 1.2,
         train_mask_ratio: float = 0.0,
@@ -445,21 +445,22 @@ def create_latent_diffusion (
 
     # TODO: change model_zoo and ['sample'] keys
     dit = getattr (model_zoo, dit_arch) (  # get class of specified dit_arch from the imported file
-        input_size = latent_res,
-        caption_channels = n_embd,
+        input_res = latent_res,
+        caption_n_embd = n_embd,
         pos_interp_scale = pos_interp_scale,
         in_channels=in_channels
     )
         
     vae = AutoencoderKL.from_pretrained (vae_name, subfolder= None if vae_name=='ostris/vae-kl-f8-d16' else 'vae', torch_dtype=DATA_TYPES[dtype], pretrained=True)
     tokenizer = UniversalTokenizer (text_encoder_name)
-    text_encoder = UniversalTextEncoder (text_encoder_name, dtype=dtype, pretrained=True)
+    text_encoder = UniversalTextEncoder (text_encoder_name, weights_dtype=dtype, pretrained=True)
     
     diffusion_model = LatentDiffusion (
         dit = dit,
         vae = vae,
         text_encoder = text_encoder,
-        precomputed_latents= precomputed_latents,
+        tokenizer=tokenizer,
+        latents_precomputed= latents_precomputed,
         dtype=dtype,
         latent_res=latent_res,
         p_mean=p_mean,
