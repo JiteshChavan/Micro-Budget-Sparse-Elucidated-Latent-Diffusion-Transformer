@@ -167,3 +167,34 @@ class openclip_text_encoder (nn.Module):
         with torch.autocast(device_type='cuda', dtype=self.weights_dtype):
             return self.forward_fn(caption_idx)
 
+def _cast_if_autocast_enabled(tensor: torch.Tensor) -> torch.Tensor:
+    """Cast tensor if autocast is enabled."""
+
+    if torch.is_autocast_enabled():
+        if tensor.device.type == 'cuda':
+            dtype = torch.get_autocast_gpu_dtype()
+        elif tensor.device.type == 'cpu':
+            dtype = torch.get_autocast_cpu_dtype()
+        else:
+            raise NotImplementedError()
+        return tensor.to(dtype=dtype)
+    return tensor
+
+class DistLoss (Metric):
+    """ Distributed loss Metric.
+     Args:
+        kwargs (Any): Additional arguments passed to parent class
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.add_state("loss", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("batches", default=torch.tensor(0.), dist_reduce_fx="sum")
+    
+    def update (self, value: torch.Tensor):
+        self.loss += value
+        self.batches += 1
+    
+    def compute(self):
+        return self.loss.float() / self.batches
+    
