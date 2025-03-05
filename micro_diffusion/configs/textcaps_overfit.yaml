@@ -1,0 +1,110 @@
+exp_name: MicroDiTTiny_textcaps_overfit_mask_75_res256_pretrain
+seed: 1337
+algorithms:
+  low_precision_layernorm:
+    precision: amp_bf16
+  gradient_clipping:
+    clipping_type: norm
+    clip_norm: 0.25
+
+model:
+  _target_: micro_diffusion.models.model.create_latent_diffusion
+  vae_name: stabilityai/stable-diffusion-xl-base-1.0
+  text_encoder_name: openclip:hf-hub:apple/DFN5B-CLIP-ViT-H-14-378
+  dit_arch: MicroDiT_Tiny
+  precomputed_latents: true
+  in_channels: 4
+  pos_interp_scale: 1.0
+  dtype: 'bfloat16'
+  latent_res: 32
+  p_mean: -0.6
+  p_std: 1.2
+  train_mask_ratio: 0.75
+
+dataset:
+  image_size: 256 # 8 * latent_res
+  train_batch_size: 2048
+  eval_batch_size: 1024
+  cap_drop_prob: 0.1
+  train:
+    _target_: micro_diffusion.datasets.latents_loader.build_streaming_latents_dataloader
+    datadir:
+      - ./datadir/textcaps/mds_latents_sdxl1_dfnclipH14/
+    drop_last: true
+    shuffle: true
+    prefetch_factor: 2
+    num_workers: 2
+    persistent_workers: true
+    pin_memory: true
+  eval:
+    _target_: micro_diffusion.datasets.latents_loader.build_streaming_latents_dataloader
+    datadir:
+      - ./datadir/textcaps/mds_latents_sdxl1_dfnclipH14/
+    drop_last: false
+    shuffle: true
+    prefetch_factor: 2
+    num_workers: 2
+    persistent_workers: true
+    pin_memory: true
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 2.4e-4
+  weight_decay: 0.1
+  eps: 1.0e-8
+  betas:
+    - 0.9
+    - 0.999
+scheduler:
+  _target_: composer.optim.CosineAnnealingWithWarmupScheduler
+  t_warmup: 2500ba
+  alpha_f: 0.33 # decay to 0.8e-4 after 256x256 masked pre-training
+logger:
+  progress:
+    _target_: composer.loggers.TensorboardLogger
+callbacks:
+  speed_monitor:
+    _target_: composer.callbacks.speed_monitor.SpeedMonitor
+    window_size: 3
+  lr_monitor:
+    _target_: composer.callbacks.lr_monitor.LRMonitor
+  runtime_estimator:
+    _target_: composer.callbacks.runtime_estimator.RuntimeEstimator
+  optimizer_monitor:
+    _target_: composer.callbacks.OptimizerMonitor
+  image_monitor:
+    _target_: micro_diffusion.models.callbacks.LogDiffusionImages
+    prompts:
+      - Many bottles on display
+      - Sport
+      - Tree and dog
+      - Watch clock on wall
+      - moon night
+      - sky blue
+      - Red car
+      - woman yellow dress
+      - white cat chair
+      - boy school uniform
+    guidance_scale: 5
+    sampling_steps: 30
+    seed: ${seed}
+  nan_catcher:
+    _target_: micro_diffusion.models.callbacks.NaNCatcher
+trainer:
+  _target_: composer.Trainer
+  device: gpu
+  max_duration: 250000ba
+  eval_interval: 2500ba
+  save_interval: 2500ba
+  save_num_checkpoints_to_keep: 1
+  device_train_microbatch_size: 4
+  run_name: ${exp_name}
+  seed: ${seed}
+  save_folder: ./trained_models/${exp_name}/
+  save_overwrite: true
+  autoresume: false
+  fsdp_config:
+    sharding_strategy: "SHARD_GRAD_OP"
+misc:
+  compile: true
+
+
