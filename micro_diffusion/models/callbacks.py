@@ -41,7 +41,17 @@ class LogDiffusionImages(Callback):
                     latent_prompt = self.latent_prompts
                     # TODO: IMPORTANT CHANGE THIS IF YOU WANT TO USE CAPTIONS
                 )
-
+            
+            with get_precision_context(state.precision):
+                images2 = model.generate(
+                    prompt = self.prompts,
+                    num_inference_steps = self.sampling_steps,
+                    guidance_scale = self.guidance_scale,
+                    seed = self.seed,
+                    latent_prompt = self.latent_prompts
+                    # TODO: IMPORTANT CHANGE THIS IF YOU WANT TO USE CAPTIONS
+                )
+            
             save_dir = f"./generated_images/{state.run_name}/{state.timestamp.batch.value}"
             os.makedirs (save_dir, exist_ok=True)
 
@@ -52,6 +62,15 @@ class LogDiffusionImages(Callback):
 
                 image_path = os.path.join(save_dir, f"{i}_{prompt[:100]}.png")
                 image.save(image_path) # save image to disk
+            
+            for i, (prompt, image) in enumerate(zip(self.prompts, images2)):
+                image = image.permute(1, 2, 0)
+                image = (image * 255).clamp(0, 255).byte().cpu().numpy()
+                image = Image.fromarray(image)
+
+                image_path = os.path.join(save_dir, f"{i+11}_{prompt[:100]}.png")
+                image.save(image_path) # save image to disk
+
 
             # Log images to tensorboard
             for prompt, image in zip (self.prompts, images):
