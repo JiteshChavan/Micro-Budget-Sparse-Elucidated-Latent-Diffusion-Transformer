@@ -639,7 +639,7 @@ class DiT(nn.Module):
             sigma_t = torch.cat ((sigma_t, sigma_t), dim=0)
         
         out = self.forward_without_cfg (x, sigma_t, c, mask_ratio, **kwargs)["sample"]
-        cond_out, uncond_out = out.split (out, len(out)//2, dim=0)
+        cond_out, uncond_out = out.split (len(out)//2, dim=0)
 
         net_out = cfg * cond_out - (cfg - 1) * uncond_out
         return {"sample" : net_out}

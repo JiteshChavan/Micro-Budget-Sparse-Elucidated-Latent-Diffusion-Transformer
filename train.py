@@ -3,6 +3,14 @@ import hydra
 
 import torch
 
+import torch.distributed as dist
+
+if dist.is_initialized():
+    dist.destroy_process_group()
+
+
+"""composer train.py --config-path ./configs --config-name textcaps_overfit.yaml exp_name=textcaps_overfit model.train_mask_ratio=0.0"""
+
 from omegaconf import DictConfig, OmegaConf
 from composer.core import Precision
 from composer.utils import dist, reproducibility
@@ -25,7 +33,7 @@ def train(cfg : DictConfig) -> None:
     
     reproducibility.seed_all(cfg['seed'])
 
-    assert cfg.model.precomputed_latents, "VAE latents are required for training latent diffusion transformer"
+    assert cfg.model.latents_precomputed, "VAE latents are required for training latent diffusion transformer"
     model = hydra.utils.instantiate(cfg.model)
 
     # Setup optimizer with special handling for MoE prameters
@@ -50,7 +58,12 @@ def train(cfg : DictConfig) -> None:
         p['betas'] = list(p['betas'])
     
     # Set up data loaders
-    cap_seq_size, cap_emb_dim = get_text_encoder_embedding_format(cfg.model.text_encoder_name)
+    if "text_enoder_name" in cfg.model:
+        cap_seq_size, cap_emb_dim = get_text_encoder_embedding_format(cfg.model.text_encoder_name)
+    else:
+        #default
+        cap_seq_size, cap_emb_dim = 77, 1024
+    
     train_loader = hydra.utils.instantiate (
         cfg.dataset.train,
         image_size=cfg.dataset.image_size,
@@ -101,10 +114,21 @@ def train(cfg : DictConfig) -> None:
     # configure callbacks
     if 'callbacks' in cfg:
         for _, call_conf in cfg.callbacks.items():
+
             if '_target_' in call_conf:
                 print (f'Instantiating callbacks : {call_conf._target_}')
-                callbacks.append(hydra.utils.instantiate(call_conf))
+                callback_instance = hydra.utils.instantiate(call_conf)
+                
+                if _ == "image_monitor" and "caption_latents_path" in call_conf:
+                    # do something
+                    latents = torch.load(call_conf.caption_latents_path)
+                    callback_instance.latent_prompts  = latents
+                    print ("LOADED LATENT PROMPTS FOR INFERENCE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                    
+                callbacks.append(callback_instance)
     
+            
+            
     scheduler = hydra.utils.instantiate(cfg.scheduler)
 
     # disable online evals if using torch.compile
@@ -129,7 +153,8 @@ def train(cfg : DictConfig) -> None:
     # Ensure models are on correct device
     device = next(model.dit.parameters()).device
     model.vae.to(device)
-    model.text_encoder.to(device)
+    if model.text_encoder is not None:
+        model.text_encoder.to(device)
 
     return trainer.fit()
 

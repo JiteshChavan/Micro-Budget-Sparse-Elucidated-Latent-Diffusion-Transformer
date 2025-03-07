@@ -94,11 +94,13 @@ class LatentDiffusion (ComposerModel):
         self.tokenizer = tokenizer
 
         # Freeze vae and text_encoder
-        self.text_encoder.requires_grad_(False)
+        if self.text_encoder is not None:
+            self.text_encoder.requires_grad_(False)
         self.vae.requires_grad_ (False)
 
         # dont FSDP wrap frozen models
-        self.text_encoder._fsdp_wrap = False
+        if self.text_encoder is not None:
+            self.text_encoder._fsdp_wrap = False
         self.vae._fsdp_wrap = False
         self.dit._fsdp_wrap = True
 
@@ -203,8 +205,8 @@ class LatentDiffusion (ComposerModel):
         # sample B (512) eps from N(0, I) reshape to be of shape (B, 1, 1, 1)
         eps = torch.randn([x.shape[0], 1, 1, 1], device=x.device) # eps from N(0, I) (B, 1, 1, 1)
         
-        # sample sigma(t) from lognormal (P_mean, P_std)
-        sigma_t = (self.edm_config.P_mean + self.edm_config.P_std*eps).exp()
+        # sample sigma(t) from lognormal (p_mean, p_std)
+        sigma_t = (self.edm_config.p_mean + self.edm_config.p_std*eps).exp()
         
         # loss weighting 
         loss_weight = (sigma_t ** 2 + self.edm_config.sigma_data ** 2) / (sigma_t * self.edm_config.sigma_data) ** 2
@@ -371,34 +373,38 @@ class LatentDiffusion (ComposerModel):
     @torch.no_grad()
     def generate (
         self,
+        latent_prompt : torch.Tensor = None,
         prompt : Optional[list] = None,
         tokenized_prompts : Optional[torch.LongTensor] = None,
         attention_mask : Optional[torch.LongTensor] = None,
         guidance_scale : Optional[float] = 5.0,
-        num_inference_stepts: Optional[int] = 30,
+        num_inference_steps: Optional[int] = 30,
         seed: Optional[int] = None,
         return_only_latents : Optional[bool] = False,
         **kwargs
     )-> torch.Tensor:
         # check caption prompt
-        assert prompt or tokenized_prompts, f"Must provide either prompt or tokenized prompts"
+        assert prompt is not None or tokenized_prompts is not None or latent_prompt is not None, f"Must provide either prompt or tokenized prompts or latent_prompt"
         device = self.vae.device # id model device during training
         rng_generator = torch.Generator(device=device)
         if seed:
             rng_generator = rng_generator.manual_seed(seed)
         
-        # caption prompt -> tokenize -> clip embed
-        if tokenized_prompts is None:
-            out = self.tokenizer.tokenize (prompt)
-            tokenized_prompts = out['caption_idx']  # (B, 77)
-            attention_mask = (
-                out['attention_mask'] if 'attention_mask' in out else None
-            )
-        
-        text_embeddings = self.text_encoder.encode (
-            tokenized_prompts.to(device),
-            attention_mask=attention_mask.to(device) if attention_mask is not None else None
-        )[0] # extract latent embeddings from returned tuple ((B,1,T,C), NONE)
+        if latent_prompt is None:
+            # caption prompt -> tokenize -> clip embed
+            if tokenized_prompts is None:
+                out = self.tokenizer.tokenize (prompt)
+                tokenized_prompts = out['caption_idx']  # (B, 77)
+                attention_mask = (
+                    out['attention_mask'] if 'attention_mask' in out else None
+                )
+            
+            text_embeddings = self.text_encoder.encode (
+                tokenized_prompts.to(device),
+                attention_mask=attention_mask.to(device) if attention_mask is not None else None
+            )[0] # extract latent embeddings from returned tuple ((B,1,T,C), NONE)
+        else:
+            text_embeddings = latent_prompt
 
         latents = torch.randn (
             (len(text_embeddings), self.dit.in_channels, self.latent_res, self.latent_res),
@@ -410,7 +416,7 @@ class LatentDiffusion (ComposerModel):
         latents = self.edm_sampler_loop (
             latents,
             text_embeddings,
-            num_inference_stepts,
+            num_inference_steps,
             cfg=guidance_scale
         )
 
@@ -429,7 +435,7 @@ class LatentDiffusion (ComposerModel):
 
 def create_latent_diffusion (
         vae_name: str = 'stabilityai/stable-diffusion-xl-base-1.0',
-        text_encoder_name: str = 'openclip:hf-hub:apple/DFN5B-CLIP-ViT-H-14-378',
+        text_encoder_name: str = None, #'openclip:hf-hub:apple/DFN5B-CLIP-ViT-H-14-378',
         dit_arch: str = "MicroDiT_XL",
         latent_res: int = 32,
         in_channels: int = 4,
@@ -441,7 +447,11 @@ def create_latent_diffusion (
         train_mask_ratio: float = 0.0,
 )-> LatentDiffusion:
     # Retrieve max sequence length (s) and text n_embd from text encoder
-    seq_length, n_embd = get_text_encoder_embedding_format(text_encoder_name)
+    if text_encoder_name is not None:
+        seq_length, n_embd = get_text_encoder_embedding_format(text_encoder_name)
+    else:
+        # precomputed latents
+        seq_length, n_embd = 77, 1024
 
     # TODO: change model_zoo and ['sample'] keys
     dit = getattr (model_zoo, dit_arch) (  # get class of specified dit_arch from the imported file
@@ -452,8 +462,12 @@ def create_latent_diffusion (
     )
         
     vae = AutoencoderKL.from_pretrained (vae_name, subfolder= None if vae_name=='ostris/vae-kl-f8-d16' else 'vae', torch_dtype=DATA_TYPES[dtype], pretrained=True)
-    tokenizer = UniversalTokenizer (text_encoder_name)
-    text_encoder = UniversalTextEncoder (text_encoder_name, weights_dtype=dtype, pretrained=True)
+    if text_encoder_name is not None:
+        tokenizer = UniversalTokenizer (text_encoder_name)
+        text_encoder = UniversalTextEncoder (text_encoder_name, weights_dtype=dtype, pretrained=True)
+    else:
+        tokenizer = None
+        text_encoder = None
     
     diffusion_model = LatentDiffusion (
         dit = dit,

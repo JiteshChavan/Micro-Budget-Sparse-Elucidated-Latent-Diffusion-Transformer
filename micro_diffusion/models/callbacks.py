@@ -17,12 +17,14 @@ class LogDiffusionImages(Callback):
         seed (int): Random seed to use for generation. Set a seed for reproducible generation.
     """
 
-    def __init__(self, prompts: List[str], sampling_steps: int = 30, guidance_scale: float= 5.0, seed:Optional[int]=1337):
+    def __init__(self, prompts:List[str], latent_prompts:torch.Tensor=None, sampling_steps: int = 30, guidance_scale: float= 5.0, seed:Optional[int]=1337, caption_latents_path=None):
         self.prompts = prompts
+        self.latent_prompts = latent_prompts
         self.sampling_steps = sampling_steps
         self.guidance_scale = guidance_scale
         self.seed = seed
 
+        
     def eval_batch_end (self, state: State, logger: Logger):
         # only log once per eval epoch
         if state.eval_timestamp.get (TimeUnit.BATCH).value == 1:
@@ -32,18 +34,23 @@ class LogDiffusionImages(Callback):
             # Generate images
             with get_precision_context(state.precision):
                 images = model.generate(
-                    self.prompts,
+                    prompt = self.prompts,
                     num_inference_steps = self.sampling_steps,
                     guidance_scale = self.guidance_scale,
                     seed = self.seed,
+                    latent_prompt = self.latent_prompts
+                    # TODO: IMPORTANT CHANGE THIS IF YOU WANT TO USE CAPTIONS
                 )
 
-            save_dir = f"./generated_images/{state.run_name}/"
+            save_dir = f"./generated_images/{state.run_name}/{state.timestamp.batch.value}"
             os.makedirs (save_dir, exist_ok=True)
 
             for i, (prompt, image) in enumerate(zip(self.prompts, images)):
-                image_path = os.path.join(save_dir, f"{state.timestamp.batch.value}_{i}_{prompt[:100]}.png")
-                image = Image.fromarray(image) # convert tensor/array to PIL image if needed
+                image = image.permute(1, 2, 0)
+                image = (image * 255).clamp(0, 255).byte().cpu().numpy()
+                image = Image.fromarray(image)
+
+                image_path = os.path.join(save_dir, f"{i}_{prompt[:100]}.png")
                 image.save(image_path) # save image to disk
 
             # Log images to tensorboard

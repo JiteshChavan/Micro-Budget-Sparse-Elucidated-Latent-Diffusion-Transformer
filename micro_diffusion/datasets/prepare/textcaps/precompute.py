@@ -1,3 +1,9 @@
+import torch.distributed as dist
+
+if dist.is_initialized():
+    dist.destroy_process_group()
+
+
 import os
 import time
 from argparse import ArgumentParser
@@ -20,12 +26,17 @@ from micro_diffusion.models.utils import UniversalTextEncoder, DATA_TYPES
 import gc
 
 """Example usage:
-    accelerate launch --multi_gpu --num_processes 8 precompute.py \
-    --datadir ./textcaps/mds/ \
-    --savedir ./textcaps/clipH14_latents \
+    CUDA_LAUNCH_BLOCKING=1 accelerate launch precompute.py \
+    --datadir ./mds/ \
+    --savedir ./mds_latents_sdxl1_dfnclipH14/ \
     --vae stabilityai/stable-diffusion-xl-base-1.0 \
     --text_encoder openclip:hf-hub:apple/DFN5B-CLIP-ViT-H-14-378 \
     --batch_size 32
+
+    for windows
+    accelerate launch precompute.py --datadir ./mds/ --savedir ./mds_latents_sdxl1_dfnclipH14/ --vae stabilityai/stable-diffusion-xl-base-1.0 --text_encoder openclip:hf-hub:apple/DFN5B-CLIP-ViT-H-14-378 --batch_size 4
+
+
 """
 
 def extract_commandline_flags ():
@@ -72,7 +83,7 @@ def extract_commandline_flags ():
         "--image_resolutions",
         type=int,
         nargs="+",
-        defaults=[256, 512],
+        default=[256, 512],
         help="List of image resolutions to use for processing."
     )
     parser.add_argument(
@@ -115,8 +126,8 @@ def main (args):
     device = accelerator.device
     device_idx = int(accelerator.process_index)
     # TODO: introspect later
-    device = f"{device}:{device_idx}"
-
+   
+    device = f"{device}"
     torch.manual_seed(args.seed + device_idx)
     torch.cuda.manual_seed (args.seed + device_idx)
     np.random.seed (args.seed + device_idx)
@@ -130,10 +141,11 @@ def main (args):
         caption_key=caption_key,
         tokenizer_name=args.text_encoder,
         prefetch_factor=2,
-        num_wokers = 2,
+        num_workers = 2,
         persistent_workers=True,
         pin_memory=True
     )
+
 
     print (f"Device: {device_idx}, Dataloader sample count : {len(dataloader.dataset)}")
     print (f"MP Variable -> world size: {os.environ['WORLD_SIZE']} \
@@ -172,7 +184,7 @@ def main (args):
 
         # captions now has tokenized captions using the specified tokenizer, not strings
         # torch.stack 512 x (1, 77) -> (512, 1, 77)
-        captions = torch.stack(batch[caption_key])
+        captions = torch.stack(batch[caption_key]).to(device)
 
         with torch.no_grad():
             with torch.autocast(device_type=device, dtype=DATA_TYPES[args.model_dtype]):
@@ -249,7 +261,7 @@ def main (args):
     # Merge the mds shards created by each device (only do on main process)
     if accelerator.is_main_process:
         shards_metadata = [
-            os.path.join (args.saveddir, str(i), "index.json")
+            os.path.join (args.savedir, str(i), "index.json")
             for i in range(accelerator.num_processes)
         ]
         merge_index (shards_metadata, out=args.savedir, keep_local=True)

@@ -10,26 +10,26 @@ algorithms:
 model:
   _target_: micro_diffusion.models.model.create_latent_diffusion
   vae_name: stabilityai/stable-diffusion-xl-base-1.0
-  text_encoder_name: openclip:hf-hub:apple/DFN5B-CLIP-ViT-H-14-378
+  #text_encoder_name: openclip:hf-hub:apple/DFN5B-CLIP-ViT-H-14-378
   dit_arch: MicroDiT_Tiny
-  precomputed_latents: true
+  latents_precomputed: true
   in_channels: 4
   pos_interp_scale: 1.0
   dtype: 'bfloat16'
   latent_res: 32
   p_mean: -0.6
   p_std: 1.2
-  train_mask_ratio: 0.75
+  train_mask_ratio: 0.0
 
 dataset:
   image_size: 256 # 8 * latent_res
-  train_batch_size: 2048
-  eval_batch_size: 1024
+  train_batch_size: 64
+  eval_batch_size: 64
   cap_drop_prob: 0.1
   train:
     _target_: micro_diffusion.datasets.latents_loader.build_streaming_latents_dataloader
     datadir:
-      - ./datadir/textcaps/mds_latents_sdxl1_dfnclipH14/
+      - ./datadir/textcaps/mds_latents_sdxl1_dfnclipH14/0
     drop_last: true
     shuffle: true
     prefetch_factor: 2
@@ -39,7 +39,7 @@ dataset:
   eval:
     _target_: micro_diffusion.datasets.latents_loader.build_streaming_latents_dataloader
     datadir:
-      - ./datadir/textcaps/mds_latents_sdxl1_dfnclipH14/
+      - ./datadir/textcaps/mds_latents_sdxl1_dfnclipH14/0
     drop_last: false
     shuffle: true
     prefetch_factor: 2
@@ -56,7 +56,7 @@ optimizer:
     - 0.999
 scheduler:
   _target_: composer.optim.CosineAnnealingWithWarmupScheduler
-  t_warmup: 2500ba
+  t_warmup: 25ba
   alpha_f: 0.33 # decay to 0.8e-4 after 256x256 masked pre-training
 logger:
   progress:
@@ -73,9 +73,11 @@ callbacks:
     _target_: composer.callbacks.OptimizerMonitor
   image_monitor:
     _target_: micro_diffusion.models.callbacks.LogDiffusionImages
+    caption_latents_path: "./utility_clip/caption_latents.pt"
+    latent_prompts: null
     prompts:
-      - Many bottles on display
-      - Sport
+      - Colourful ball
+      - street 
       - Tree and dog
       - Watch clock on wall
       - moon night
@@ -83,7 +85,7 @@ callbacks:
       - Red car
       - woman yellow dress
       - white cat chair
-      - boy school uniform
+      - garden flower orange
     guidance_scale: 5
     sampling_steps: 30
     seed: ${seed}
@@ -92,11 +94,11 @@ callbacks:
 trainer:
   _target_: composer.Trainer
   device: gpu
-  max_duration: 250000ba
-  eval_interval: 2500ba
-  save_interval: 2500ba
+  max_duration: 10000ba
+  eval_interval: 250ba
+  save_interval: 1000ba
   save_num_checkpoints_to_keep: 1
-  device_train_microbatch_size: 4
+  device_train_microbatch_size: 8
   run_name: ${exp_name}
   seed: ${seed}
   save_folder: ./trained_models/${exp_name}/
@@ -105,6 +107,6 @@ trainer:
   fsdp_config:
     sharding_strategy: "SHARD_GRAD_OP"
 misc:
-  compile: true
+  compile: false
 
 
