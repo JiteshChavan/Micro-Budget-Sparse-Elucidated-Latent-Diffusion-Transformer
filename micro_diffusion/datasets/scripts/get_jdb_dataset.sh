@@ -3,10 +3,8 @@
 # Get user input for data directory and dataset size
 datadir=$1
 dataset_size=$2 # small or all
-num_gpus=$3
+num_proc=$3
 
-num_proc=8
-batch_size=32 # use batch size of 8 for <16GB GPU memory
 
 # A. Download a small subset (~1%) of the dataset, if specified
 if [ "$dataset_size" == "small" ]; then
