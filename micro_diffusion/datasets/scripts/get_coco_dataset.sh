@@ -2,7 +2,7 @@
 
 # Get user input for data directory and dataset size
 datadir=$1
-num_gpus=$2
+
 
 
 
