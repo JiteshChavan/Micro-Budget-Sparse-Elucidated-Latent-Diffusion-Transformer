@@ -1,6 +1,11 @@
 #!/bin/bash
 
 # Get user input for data directory and dataset size
+
+echo datadir
+echo dataset_size_small/all # small or all
+echo num_proc
+
 datadir=$1
 dataset_size=$2 # small or all
 num_proc=$3
