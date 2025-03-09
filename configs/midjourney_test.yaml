@@ -73,7 +73,7 @@ callbacks:
     _target_: composer.callbacks.OptimizerMonitor
   image_monitor:
     _target_: micro_diffusion.models.callbacks.LogDiffusionImages
-    caption_latents_path: "./utility_clip/caption_latents.pt"
+    #caption_latents_path: "./utility_clip/caption_latents.pt"
     latent_prompts: null
     prompts:
       - Nature in silhouette of an owl

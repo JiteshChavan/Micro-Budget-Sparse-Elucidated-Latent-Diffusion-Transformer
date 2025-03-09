@@ -644,6 +644,7 @@ class DiT(nn.Module):
         net_out = cfg * cond_out - (cfg - 1) * uncond_out
         return {"sample" : net_out}
     
+    # only called in inference
     def forward (
             self,
             x:torch.Tensor,
@@ -655,10 +656,9 @@ class DiT(nn.Module):
         """Call appropriate forward pass based on classifier-free guidance value."""
 
         if cfg != 1.0:
-            # only called in EDM sampler loop
             return self.forward_with_cfg(x, sigma_t, c, cfg, **kwargs)
         else:
-            # only called in inference
+           
             return self.forward_without_cfg(x, sigma_t, c, **kwargs)
 
     def initialize_weights(self):

@@ -187,7 +187,7 @@ class LatentDiffusion (ComposerModel):
         out = model_forward_fxn (
             (c_in * x).to(x.dtype),
             c_noise.flatten(), # TODO: introspect later (B)
-            y, # text caption?
+            y, # text caption
             mask_ratio=mask_ratio, 
             **kwargs
         )
@@ -406,6 +406,7 @@ class LatentDiffusion (ComposerModel):
         else:
             text_embeddings = latent_prompt
 
+        # xT
         latents = torch.randn (
             (len(text_embeddings), self.dit.in_channels, self.latent_res, self.latent_res),
             device = device,
