@@ -50,8 +50,8 @@ def convert_to_mds(args: ArgumentParser):
         out=args.local_mds_dir,
         columns=columns,
         compression=None,
-        size_limit=256 * (2**20),
-        max_workers=16,
+        size_limit=8 * (2**30),
+        max_workers=48,
     )
     
     print ("creating archive list")

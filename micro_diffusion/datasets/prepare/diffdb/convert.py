@@ -59,7 +59,7 @@ def write_df(args: ArgumentParser, df: pd.DataFrame, idx: int):
         out=os.path.join(args.local_mds_dir, str(idx)),
         columns=columns,
         compression=None,
-        size_limit=256 * (2**20),
+        size_limit=8 * (2**30),
         max_workers=64,
     )
 

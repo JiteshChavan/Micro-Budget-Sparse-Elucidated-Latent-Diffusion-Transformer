@@ -132,8 +132,8 @@ def main(args):
         shuffle=False,
         caption_key=cap_key,
         tokenizer_name=args.text_encoder,
-        prefetch_factor=4,
-        num_workers=4,
+        prefetch_factor=8,
+        num_workers=32,
         persistent_workers=True,
         pin_memory=True,
     )
@@ -176,7 +176,7 @@ def main(args):
         out=remote_upload,
         columns=columns,
         compression=None,
-        size_limit=256 * (2**20),
+        size_limit=8 * (2**30),
         max_workers=64,
     )
 

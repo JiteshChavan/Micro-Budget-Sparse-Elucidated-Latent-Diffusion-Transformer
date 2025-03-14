@@ -47,7 +47,7 @@ class LogDiffusionImages(Callback):
                     prompt = self.prompts,
                     num_inference_steps = self.sampling_steps,
                     guidance_scale = self.guidance_scale,
-                    seed = self.seed,
+                    seed = 100499,
                     latent_prompt = self.latent_prompts
                     # TODO: IMPORTANT CHANGE THIS IF YOU WANT TO USE CAPTIONS
                 )

@@ -31,7 +31,8 @@ class StreamingLatentsDataset (StreamingDataset):
         super().__init__(
             streams=streams,
             shuffle=shuffle,
-            batch_size=batch_size
+            batch_size=batch_size,
+            remote=None
         )
 
         self.image_size = image_size

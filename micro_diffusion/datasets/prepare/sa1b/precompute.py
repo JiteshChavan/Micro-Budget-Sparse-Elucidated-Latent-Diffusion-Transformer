@@ -128,8 +128,8 @@ def main(args: ArgumentParser) -> None:
         shuffle=False,
         caption_key=syn_cap_key,  # Using llava captions in MDS dataset
         tokenizer_name=args.text_encoder,
-        prefetch_factor=2,
-        num_workers=2,
+        prefetch_factor=8,
+        num_workers=32,
         persistent_workers=True,
         pin_memory=True,
     )

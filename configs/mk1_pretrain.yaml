@@ -1,4 +1,4 @@
-exp_name: MicroDiTTiny_modjourney_test_no_mask
+exp_name: mk1_pretrain
 seed: 1337
 algorithms:
   low_precision_layernorm:
@@ -9,9 +9,9 @@ algorithms:
 
 model:
   _target_: micro_diffusion.models.model.create_latent_diffusion
-  vae_name: null #stabilityai/stable-diffusion-xl-base-1.0
+  vae_name: stabilityai/stable-diffusion-xl-base-1.0
   text_encoder_name: null #openclip:hf-hub:apple/DFN5B-CLIP-ViT-H-14-378
-  dit_arch: MicroDiT_XL
+  dit_arch: MicroDiT_Tiny # change this for local expt
   latents_precomputed: true
   in_channels: 4
   pos_interp_scale: 1.0
@@ -19,17 +19,17 @@ model:
   latent_res: 32
   p_mean: -0.6
   p_std: 1.2
-  train_mask_ratio: 0.0
+  train_mask_ratio: 0.75
 
 dataset:
-  image_size: 256 # 8 * latent_res
-  train_batch_size: 1
-  eval_batch_size: 4
+  image_size: 256 #
+  train_batch_size: 32
+  eval_batch_size: 64
   cap_drop_prob: 0.1
   train:
     _target_: micro_diffusion.datasets.latents_loader.build_streaming_latents_dataloader
     datadir:
-      - ./datadir/jdb/journeyDB/jdb_mds_latents/train
+      - ./datadir/jdb/journeyDB/jdb_mds_latents/train/
     drop_last: true
     shuffle: true
     prefetch_factor: 2
@@ -38,29 +38,32 @@ dataset:
     pin_memory: true
   eval:
     _target_: micro_diffusion.datasets.latents_loader.build_streaming_latents_dataloader
-    datadir:
-      - ./datadir/jdb/journeyDB/jdb_mds_latents/valid
+    datadir: ./datadir/jdb/journeyDB/jdb_mds_latents/valid # we arent running evals for pretraining eitherway
     drop_last: false
     shuffle: true
     prefetch_factor: 2
     num_workers: 2
-    persistent_workers: true
+    persistent_workers: 2
     pin_memory: true
+
 optimizer:
   _target_: torch.optim.AdamW
-  lr: 2.4e-4
+  lr: 2.4e-4 # decay to 8e-5 after 256x256 masked pre-training
   weight_decay: 0.1
-  eps: 1.0e-8
+  eps: 1e-8
   betas:
     - 0.9
     - 0.999
+
 scheduler:
   _target_: composer.optim.CosineAnnealingWithWarmupScheduler
   t_warmup: 250ba
-  alpha_f: 0.33 # decay to 0.8e-4 after 256x256 masked pre-training
+  alpha_f: 0.33 
+
 logger:
   progress:
     _target_: composer.loggers.TensorboardLogger
+
 callbacks:
   speed_monitor:
     _target_: composer.callbacks.speed_monitor.SpeedMonitor
@@ -73,32 +76,35 @@ callbacks:
     _target_: composer.callbacks.OptimizerMonitor
   image_monitor:
     _target_: micro_diffusion.models.callbacks.LogDiffusionImages
-    #caption_latents_path: "./utility_clip/caption_latents.pt"
+    caption_latents_path: "./utility_clip/caption_latents.pt"
     latent_prompts: null
     prompts:
-      - Nature in silhouette of an owl
-      - cyberpunk panda 
-      - majestic knight in shining armor
-      - waterfall dragon
-      - Robot in forest
-      - Shield maiden with wings
-      - a shadowy land of ghosts and specters
-      - woman with red cape long hair
-      - galaxy volcano explosion
-      - sage crystal orb
-    guidance_scale: 4
+      - portrait of a beautiful lady with purple hair. Green vines and leaves surrounding her
+      - Ocean wave, aesthetic, soothing, turqoise blue
+      - Funny portrait of a koala
+      - Mysterious tree surrounded by lake
+      - A heroic girl's silhouette with moon as backdrop, moon is partially covered by clounds, its evening
+      - An armed hero with cape standing in near explosion, warm color scheme
+      - Malevolent wizard with his staff and hat
+      - Watercolor splash art of a butterfly, purple yellow green blue
+      - A bird on branch with moon backdrop, ominous 
+      - Sunset crystal warm happy
+      - monster in ominous forest, lake, moon, night
+      - volcano galaxy explosion blue purple ominous
+    guidance_scale: 5
     sampling_steps: 30
     seed: ${seed}
   nan_catcher:
     _target_: micro_diffusion.models.callbacks.NaNCatcher
+
 trainer:
   _target_: composer.Trainer
   device: gpu
-  max_duration: 16000ba
-  eval_interval: 500ba
-  save_interval: 1000ba
-  save_num_checkpoints_to_keep: 2
-  device_train_microbatch_size: 1
+  max_duration: 10000ba
+  eval_interval: 2500ba
+  save_interval: 2500ba
+  save_num_checkpoints_to_keep: 1
+  device_train_microbatch_size: 32
   run_name: ${exp_name}
   seed: ${seed}
   save_folder: ./trained_models/${exp_name}/
@@ -106,7 +112,8 @@ trainer:
   autoresume: false
   fsdp_config:
     sharding_strategy: "SHARD_GRAD_OP"
+
 misc:
-  compile: false
+  compile: true
 
 
