@@ -1,1 +1,1 @@
-![Alt text](./Assets/owl.png)
+![](./assets/owl.png)
