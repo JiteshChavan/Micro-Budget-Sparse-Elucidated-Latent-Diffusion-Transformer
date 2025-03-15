@@ -100,11 +100,11 @@ The repository implements a 1.2B parameters *Sparse Diffusion Transformer Model*
 The latent text prompt is processed with self attention layer then linearly projected to have the same channels as the DiT backbone.
 The DiT architecture consists of a light weight *patchmixer transformer*, followed by *DiT Backbone transformer* which consist of 6 and 28 *DiT blocks* respectively.
 
-Each *DiT block* consists of self-attention block that refines information flow during foward pass, cross-attention block that modulates the information flow by aggregating information from latent embeddings from the pretrained **OpenClip** model and a feed forward block that processes the information. Within each block, the intermediate activations of *Self-attention* and *Cross-attention* blocks are modulated by *scale, gate and shift* factors devised from current noise level ($\sigma(t)$) modulated with *pooled* open-clip latent embeddings using *AdaLN* layer.
+Each *DiT block* consists of self-attention block that refines information flow during foward pass, cross-attention block that modulates the information flow by aggregating information from latent embeddings from the pretrained **OpenClip** model and a feed forward block that processes the information. Within each block, the intermediate activations of *Self-attention* and *Cross-attention* blocks are modulated by *scale, gate and shift* factors devised from current noise level $\sigma(t)$ modulated with *pooled* open-clip latent embeddings using *AdaLN* layer.
 
 The model utilizes *Expert Choice Mixture of Experts blocks*, with 2:8 activation ratio, in alternative *DiT blocks* to increase the representation power of the network without significantly increasing the training cost.
 
-The model utilizes sinusoidal embeddings for representing current noise level ($\sigma(t)$) and encoding positional information.
+The model utilizes sinusoidal embeddings for representing current noise level $\sigma(t)$ and encoding positional information.
 
 ## Installation:
 Clone and install repository as follows:
