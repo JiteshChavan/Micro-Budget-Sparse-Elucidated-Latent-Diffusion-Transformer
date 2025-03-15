@@ -1,6 +1,6 @@
 # Sparse Elucidated Latent Diffusion Transformer for text guided image synthesis
 This repository contains the implementation resources for a **1.2B** parameters Sparse Ellucidated Latent Diffusion Transformer Model, achieving state-of-the-art image generation results, achieving an FID of 12.7 in zero-shot generation on the COCO dataset, at a significantly reduced computational cost of **$1314**.
-The model is trained for masked and unmasked denoising representation representation learning subject to text prompts/captions using **classifier free guidance (CFG)** to ensure that the generated image is adherent to the text prompt.
+The model is trained for masked and unmasked denoising representation learning subject to text prompts/captions using **classifier free guidance (CFG)** to ensure that the generated image is adherent to the text prompt.
 
 
 # Results:
