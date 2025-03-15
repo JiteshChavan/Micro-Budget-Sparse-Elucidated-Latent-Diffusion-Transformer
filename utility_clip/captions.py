@@ -2,19 +2,20 @@ import torch
 from micro_diffusion.models.utils import UniversalTokenizer, UniversalTextEncoder
 
 captions = [
-      "a beautiful lady with purple hair. clothes made from Green vines and leaves surrounding her shoulders",
-      "Ocean wave, aesthetic, soothing, turqoise blue",
+      "portrait of a beautiful lady with purple hair. Green vines and leaves surrounding her",
+      "Ocean wave, aesthetic, soothing, turquoise blue",
       "Funny portrait of a koala",
       "Mysterious tree surrounded by lake",
-      "A heroic girl's silhouette with moon as backdrop, moon is partially covered by clounds, its evening",
-      "An armed hero with cape standing near explosion, warm color scheme, epic",
+      "A heroic girl's silhouette with moon as backdrop, moon is partially covered by clouds, its evening",
+      "An armed hero with cape standing near explosion, warm color scheme",
       "Malevolent wizard with his staff and hat",
       "Watercolor splash art of a butterfly, purple yellow green blue",
-      "A bird on branch with moon backdrop, ominous ",
-      "Sunset crystal warm happy",
+      "A bird on branch with moon backdrop, ominous, scary ",
+      "Sunset over mountains, river of blood",
       "monster in ominous forest, lake, moon, night",
       "volcano galaxy explosion blue purple ominous",
-      "shadow lands warm, happy, ghost, spectres"
+      "Charizard using flamethrower, cinematic shot",
+      "Harry Potter playing quidditch in the grounds of hogwarts castle",
 ]
 
 

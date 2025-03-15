@@ -1,5 +1,7 @@
 # Sparse Elucidated Latent Diffusion Transformer for text guided image synthesis
-This repository contains the implementation resources for a **1.2B** parameters Sparse Ellucidated Latent Diffusion Transformer Model, achieving state-of-the-art image generation results, achieving an FID of 12.7 in zero-shot generation on the COCO dataset, at a significantly reduced computational cost of **$1314**. 
+This repository contains the implementation resources for a **1.2B** parameters Sparse Ellucidated Latent Diffusion Transformer Model, achieving state-of-the-art image generation results, achieving an FID of 12.7 in zero-shot generation on the COCO dataset, at a significantly reduced computational cost of **$1314**.
+The model is trained for masked and unmasked denoising representation representation learning subject to text prompts/captions using **classifier free guidance (CFG)** to ensure that the generated image is adherent to the text prompt.
+
 
 # Results:
 ![](./assets/owl.png)
@@ -78,18 +80,62 @@ Thus the *Backbone Network* is encouraged to output straight approximation of $x
 
 
 # Diffusion Transformer Architecture
+Score based Generative models formulate the task of generating samples from distribution as iteratively denoising, or rather following the score function (log-gradient of true distribution), starting from a completely random sample from a Gaussian Distribution or a sample that still has some structure preserved that acts as a guiding factor for the iterative denoising process such as in stroke based generations using reverse diffusion for example.
+As mentioned before the forward and reverse diffusion processes can be modelled with SDEs (Stochastic Differential Equations) with implicit Langevin exploration to rectify errors introduced in it intial sampling of the random noise $x_T$. The SDE formulation is reliant on the score function (log-gradient) of the true distribution, which can be evaluated using a denoiser, as explained in the work done by *Vincent Pascal* on *Denoising Score Matching*, the denoiser is approximated by the *Backbone Neural Network* in EDM models.
+
+This repository implements the *Backbone Neural Network* as a *Diffusion Transformer Model*.
+
+**Latent Diffusion for Efficiency:**
+The cost for training transformers scales quadratically with input sequence length to the transformer model, and minimizing the training cost being the key highlight of this project, this repository resorts to implmenting Diffusion Model in the Latent Space of a Variational Autoencoder (VAE) `stabilityai/stable-diffusion-xl-base-1.0` with 8x compression ratio and 4 channels in the latent space, which effectively reduces the input sequence length to the transformer model by a factor of 8. 
+
+**Patch Masking to reduce input sequence length during pretraining**
+Input sequence length is further reduced by masking out 75% of the patches in the input to the DiT, while offsetting the loss of information from masking out 75% of the patches by prepending a lightweight *patchmixer transformer* to capture global context prior to applying masking to retain semantic information of the entire image and increase the effectiveness of the pretraining task to distill representation for masked denoising process. The loss objective exclusively consists of the patches that are visible to the DiT during training. The learned representation is further refined after pretraining stage by fine tuning with 0 masking ratio, so that the model is able to predict the score-function accurately during inference when no masking is involved. 
+
+The repository provides a progressive pretraining‑finetuning pipeline, seamlessly scaling the model’s denoising capabilities across resolutions by dynamically adjusting positional embeddings, enabling effective masked and unmasked denoising representation learning.
+The model is first pretrained with 75% patch masking then fintuned at 256x256 image resolution and then pretraining into fine tuning pipeline is reiterated on 512x512 images.
+
+**Architecture Details:**
+The repository implements a 1.2B parameters *Sparse Diffusion Transformer Model* to parametrize the score-function for iterative denoising of the VAE latents to generate a sample in latent space of VAE, which upon being decoded results into an image coherent to the text prompt. This implementation utilizes the `openclip:hf-hub:apple/DFN5B-CLIP-ViT-H-14-378` pretrained clip model for latent representation of text prompts.
+
+The latent text prompt is processed with self attention layer then linearly projected to have the same channels as the DiT backbone.
+The DiT architecture consists of a light weight *patchmixer transformer*, followed by *DiT Backbone transformer* which consist of 6 and 28 *DiT blocks* respectively.
+
+Each *DiT block* consists of self-attention block that refines information flow during foward pass, cross-attention block that modulates the information flow by aggregating information from latent embeddings from the pretrained **OpenClip** model and a feed forward block that processes the information. Within each block, the intermediate activations of *Self-attention* and *Cross-attention* blocks are modulated by *scale, gate and shift* factors devised from current noise level ($\sigma(t)$) modulated with *pooled* open-clip latent embeddings using *AdaLN* layer.
+
+The model utilizes *Expert Choice Mixture of Experts blocks*, with 2:8 activation ratio, in alternative *DiT blocks* to increase the representation power of the network without significantly increasing the training cost.
+
+The model utilizes sinusoidal embeddings for representing current noise level ($\sigma(t)$) and encoding positional information.
+
+## Installation:
+Clone and install repository as follows:
+```bash
+    pip install .
+```
+
+## Datasets:
+The model was trained on JourneyDB, SA1B and DiffusionDB datasets, more info in [datasets](micro_diffusion/datasets/readme.md)
+
+## Training:
+The model can be trained with following command
+```bash
+composer train.py --config-path ./configs --config-name 256_pretrain.yaml exp_name=masked_pretrain model.train_mask_ratio=0.75
+```
+change configs and masking ratio in the specified command to Pretrain/finetune the model accordingly.
+The model was trained in following order:
+1. Pretrainig at 256x256 with 75% masking ratio
+2. Finetuning at 256x256 with 0% masking ratio
+3. Pretrainig at 512x512 with 75% masking ratio
+4. Pretrainig at 512x512 with 0% masking ratio
+
+These stages can be made to run sequentially by running,
+```bash
+bash execute.sh
+```
+
+## Acknowledgements:
+The implementation of this Diffusion Model takes heavy inspiration from the paper [Elucidating the Design Space of Diffusion-Based Generative Models](https://arxiv.org/abs/2206.00364) and [Stretching Each Dollar: Diffusion Training from Scratch on a Micro-Budget](https://arxiv.org/abs/2407.15811)
+
+Opensource sources referred:
+Hydra Composer Framework, Diffusers Library, Streaming Dataloader
 
 
-
-
-
-
-
-
-attained State of the art results at micro budget, primarily achieved by pretraining with patch masking ratio of 75% to reduce input seq length to diffusion transformer backbone and utilizing a lightweight patchmixer transformer to capture global context prior to applying masking to retain semantic information of entire image and increase the effectiveness of pretraining task to learn/distill representation for masked denoising process. The learned representation is further refined after pretraining stage by fine tuning with 0 masking ratio.
-
-First we pretrain the model on 256x256 images then fine tune on the same resolution, and repeat the pretraining into fine tuning pipleline on 512x512 images by scaling the sinusoidal positional embeddings appropriately.
-
-The model learns to basically generates images from text prompts using state of the art diffusion modeling has 1.2B parameters Expert Choice style Mixture of experts, diffusion transformer backbone, runs cross attention on text latent embeddings from Open clip model (openclip:hf-hub:apple/DFN5B-CLIP-ViT-H-14-378) and uses Variational autoencoder (model:stabilityai/stable-diffusion-xl-base-1.0) to translate images into latent space to make training computationally feasible and facilitate high resolution image synthesis exploiting latent diffusion.
-
-it was trained on 25M image-text pairs from JourneyDB, diffusionDB, SegmentAnything1B (sa1b) datasets, using Fully Sharded Data Parallel and Hydracomposer framework

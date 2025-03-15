@@ -68,7 +68,7 @@ def main():
         out=args.local_mds_dir,
         columns=columns,
         compression=None,
-        size_limit=8 * (2**30),
+        size_limit=2 * (2**30),
         max_workers=64,
     )
 

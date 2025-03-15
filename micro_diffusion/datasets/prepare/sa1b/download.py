@@ -60,7 +60,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         '--num_proc',
         type=int,
-        default=32,
+        default=8,
         help='Number of parallel processes for downloading and processing images.'
     )
     

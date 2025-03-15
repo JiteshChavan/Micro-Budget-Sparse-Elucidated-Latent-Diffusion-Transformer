@@ -69,8 +69,8 @@ def write_images(images_path: np.ndarray, args: ArgumentParser) -> None:
         out=save_dir,
         columns=columns,
         compression=None,
-        size_limit=8 * (2**30),
-        max_workers=48
+        size_limit=2 * (2**30),
+        max_workers=64
     )
     
     for f in tqdm(images_path):

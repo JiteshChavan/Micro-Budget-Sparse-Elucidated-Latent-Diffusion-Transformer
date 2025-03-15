@@ -8,7 +8,7 @@ algorithms:
     clip_norm: 0.25
 
 model:
-  _target_: micro_diffusion.models.model.create_latent_diffusion
+  _target_: ex_micro_diffusion.models.model.create_latent_diffusion
   vae_name: stabilityai/stable-diffusion-xl-base-1.0
   text_encoder_name: null #openclip:hf-hub:apple/DFN5B-CLIP-ViT-H-14-378
   dit_arch: MicroDiT_Tiny # change this for local expt
@@ -22,14 +22,14 @@ model:
   train_mask_ratio: 0.75
 
 dataset:
-  image_size: 256 #
-  train_batch_size: 32
-  eval_batch_size: 64
+  image_size: 256 # 8xlatent res
+  train_batch_size: 16
+  eval_batch_size: 8
   cap_drop_prob: 0.1
   train:
-    _target_: micro_diffusion.datasets.latents_loader.build_streaming_latents_dataloader
+    _target_: ex_micro_diffusion.datasets.latents_loader.build_streaming_latents_dataloader
     datadir:
-      - ./datadir/jdb/journeyDB/jdb_mds_latents/train/
+      - ./datadir/jdb/jdb_mds_latents/train/
     drop_last: true
     shuffle: true
     prefetch_factor: 2
@@ -37,8 +37,8 @@ dataset:
     persistent_workers: true
     pin_memory: true
   eval:
-    _target_: micro_diffusion.datasets.latents_loader.build_streaming_latents_dataloader
-    datadir: ./datadir/jdb/journeyDB/jdb_mds_latents/valid # we arent running evals for pretraining eitherway
+    _target_: ex_micro_diffusion.datasets.latents_loader.build_streaming_latents_dataloader
+    datadir: ./datadir/jdb/jdb_mds_latents/valid # we arent running evals for pretraining eitherway
     drop_last: false
     shuffle: true
     prefetch_factor: 2
@@ -57,7 +57,7 @@ optimizer:
 
 scheduler:
   _target_: composer.optim.CosineAnnealingWithWarmupScheduler
-  t_warmup: 250ba
+  t_warmup: 250ba # TODO: change
   alpha_f: 0.33 
 
 logger:
@@ -75,36 +75,37 @@ callbacks:
   optimizer_monitor:
     _target_: composer.callbacks.OptimizerMonitor
   image_monitor:
-    _target_: micro_diffusion.models.callbacks.LogDiffusionImages
+    _target_: ex_micro_diffusion.models.callbacks.LogDiffusionImages
+    # provide a .pt file to load latent prompts directly from if openclip doesnt fit on VRAM with the model
     caption_latents_path: "./utility_clip/caption_latents.pt"
     latent_prompts: null
     prompts:
       - portrait of a beautiful lady with purple hair. Green vines and leaves surrounding her
-      - Ocean wave, aesthetic, soothing, turqoise blue
+      - Ocean wave, aesthetic, soothing, turquoise blue
       - Funny portrait of a koala
       - Mysterious tree surrounded by lake
-      - A heroic girl's silhouette with moon as backdrop, moon is partially covered by clounds, its evening
-      - An armed hero with cape standing in near explosion, warm color scheme
+      - A heroic girl's silhouette with moon as backdrop, moon is partially covered by clouds, its evening
+      - An armed hero with cape standing near explosion, warm color scheme
       - Malevolent wizard with his staff and hat
       - Watercolor splash art of a butterfly, purple yellow green blue
-      - A bird on branch with moon backdrop, ominous 
-      - Sunset crystal warm happy
+      - A bird on branch with moon backdrop, ominous, scary 
+      - Sunset over mountains, river of blood
       - monster in ominous forest, lake, moon, night
       - volcano galaxy explosion blue purple ominous
     guidance_scale: 5
     sampling_steps: 30
     seed: ${seed}
   nan_catcher:
-    _target_: micro_diffusion.models.callbacks.NaNCatcher
+    _target_: ex_micro_diffusion.models.callbacks.NaNCatcher
 
 trainer:
   _target_: composer.Trainer
   device: gpu
-  max_duration: 10000ba
-  eval_interval: 2500ba
-  save_interval: 2500ba
+  max_duration: 25ba
+  eval_interval: 25ba
+  save_interval: 25ba
   save_num_checkpoints_to_keep: 1
-  device_train_microbatch_size: 32
+  device_train_microbatch_size: 8
   run_name: ${exp_name}
   seed: ${seed}
   save_folder: ./trained_models/${exp_name}/

@@ -82,23 +82,21 @@ callbacks:
     _target_: composer.callbacks.OptimizerMonitor
   image_monitor:
     _target_: micro_diffusion.models.callbacks.LogDiffusionImages
+    # provide a .pt file to load latent prompts directly from if openclip doesnt fit on VRAM with the model
+    caption_latents_path: "./utility_clip/caption_latents.pt"
+    latent_prompts: null
     prompts:
-      - a photograph of an astronaut riding a horse
-      - An astronaut riding a pig, highly realistic dslr photo, cinematic shot
-      - Panda mad scientist mixing sparkling chemicals, artstation
-      - a close-up of a fire spitting dragon, cinematic shot.
-      - A small cactus with a happy face in the Sahara desert
-      - Pirate ship trapped in a cosmic maelstrom nebula, rendered in cosmic beach whirlpool engine, volumetric lighting, spectacular, ambient lights, light pollution, cinematic atmosphere, art nouveau style, illustration art artwork by SenseiJaye, intricate detail.
-      - A dog that has been meditating all the time
-      - A Pikachu with an angry expression and red eyes, with lightning around it, hyper realistic style
-      - A worker that looks like a mixture of cow and horse is working hard to type code
-      - A capybara made of lego sitting in a realistic, natural field
-      - A grand piano with a white bench.
-      - In a fantastical setting, a highly detailed furry humanoid skunk with piercing eyes confidently poses in a medium shot, wearing an animal hide jacket. The artist has masterfully rendered the character in digital art, capturing the intricate details of fur and clothing texture.
-      - A illustration from a graphic novel. A bustling city street under the shine of a full moon. The sidewalks bustling with pedestrians enjoying the nightlife. At the corner stall, a young woman with fiery red hair, dressed in a signature velvet cloak, is haggling with the grumpy old vendor. the grumpy vendor, a tall, sophisticated man is wearing a sharp suit, sports a noteworthy moustache is animatedly conversing on his steampunk telephone.
-      - A fierce garden gnome warrior, clad in armor crafted from leaves and bark, brandishes a tiny sword and shield. He stands valiantly on a rock amidst a blooming garden, surrounded by colorful flowers and towering plants. A determined expression is painted on his face, ready to defend his garden kingdom.
-      - A giant cobra snake made from corn
-      - A green sign that says "Very Deep Learning" and is at the edge of the Grand Canyon. Puffy white clouds are in the sky
+      - Ocean wave, aesthetic, soothing, turquoise blue
+      - Funny portrait of a koala
+      - Mysterious tree surrounded by lake
+      - A heroic girl's silhouette with moon as backdrop, moon is partially covered by clouds, its evening
+      - An armed hero with cape standing near explosion, warm color scheme
+      - Malevolent wizard with his staff and hat
+      - Watercolor splash art of a butterfly, purple yellow green blue
+      - A bird on branch with moon backdrop, ominous, scary 
+      - Sunset over mountains, river of blood
+      - monster in ominous forest, lake, moon, night
+      - volcano galaxy explosion blue purple ominous
     guidance_scale: 5
     sampling_steps: 30
     seed: ${seed}

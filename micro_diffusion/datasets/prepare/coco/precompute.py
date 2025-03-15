@@ -126,8 +126,8 @@ def main(args):
         shuffle=False,
         caption_key=cap_key,
         tokenizer_name=args.text_encoder,
-        prefetch_factor=8,
-        num_workers=32,
+        prefetch_factor=2,
+        num_workers=2,
         persistent_workers=True,
         pin_memory=True,
     )

@@ -24,8 +24,15 @@ class LogDiffusionImages(Callback):
         self.guidance_scale = guidance_scale
         self.seed = seed
 
-        
     def eval_batch_end (self, state: State, logger: Logger):
+        
+        #if self.caption_latents_path:
+        #    try:
+        #            self.latent_prompts = torch.load(self.caption_latents_path)
+        #            print(f"[INFO] Latent prompts reloaded from: {self.caption_latents_path}")
+        #    except Exception as e:
+        #        print(f"[ERROR] Failed to load latent prompts from {self.caption_latents_path}: {e}")
+        
         # only log once per eval epoch
         if state.eval_timestamp.get (TimeUnit.BATCH).value == 1:
             # get the model object if it has been wrapped by DDP
@@ -52,7 +59,7 @@ class LogDiffusionImages(Callback):
                     # TODO: IMPORTANT CHANGE THIS IF YOU WANT TO USE CAPTIONS
                 )
             
-            save_dir = f"./generated_images/{state.run_name}/{state.timestamp.batch.value}"
+            save_dir = f"./generated_images/"
             os.makedirs (save_dir, exist_ok=True)
 
             for i, (prompt, image) in enumerate(zip(self.prompts, images)):

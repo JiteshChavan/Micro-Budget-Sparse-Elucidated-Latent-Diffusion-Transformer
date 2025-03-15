@@ -1,5 +1,7 @@
 import time
 import hydra
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
 
 import torch
 
@@ -18,7 +20,7 @@ from composer.algorithms import GradientClipping
 from composer.algorithms.low_precision_layernorm import apply_low_precision_layernorm
 from micro_diffusion.models.utils import get_text_encoder_embedding_format
 
-# 3-5 % speedup
+# backends speedup?
 torch.backends.cudnn.benchmark = True
 
 @hydra.main(version_base=None)
@@ -41,6 +43,8 @@ def train(cfg : DictConfig) -> None:
 
     total_params = sum(p.numel() for p in model.dit.parameters())
     print (f"Total params:{total_params}")
+    # TODO: remove if everything's working
+    #model.to ('cuda')
     print (next(model.dit.parameters()).device)
     moe_params = [p[1] for p in model.dit.named_parameters() if 'mlp' in p[0].lower() and ('w1' in p[0].lower() and 'w2' in p[0].lower() and 'gate' in p[0].lower())]
     rest_params = [p[1] for p in model.dit.named_parameters() if 'mlp' in p[0].lower() and ('w1' not in p[0].lower() and 'w2' not in p[0].lower() and 'gate' not in p[0].lower())]
@@ -127,6 +131,7 @@ def train(cfg : DictConfig) -> None:
                     # do something
                     latents = torch.load(call_conf.caption_latents_path)
                     callback_instance.latent_prompts  = latents
+                    callback_instance.caption_latents_path = call_conf.caption_latents_path
                     print ("LOADED LATENT PROMPTS FOR INFERENCE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
                     
                 callbacks.append(callback_instance)
@@ -156,7 +161,6 @@ def train(cfg : DictConfig) -> None:
 
     # Ensure models are on correct device
     device = next(model.dit.parameters()).device
-    print(device)
     if model.vae is not None:
         model.vae.to(device)
     if model.text_encoder is not None:

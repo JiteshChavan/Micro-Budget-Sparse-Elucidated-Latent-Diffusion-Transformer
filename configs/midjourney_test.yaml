@@ -1,4 +1,4 @@
-exp_name: MicroDiTTiny_modjourney_test_no_mask
+exp_name: Midjourney_test
 seed: 1337
 algorithms:
   low_precision_layernorm:
@@ -9,7 +9,7 @@ algorithms:
 
 model:
   _target_: micro_diffusion.models.model.create_latent_diffusion
-  vae_name: null #stabilityai/stable-diffusion-xl-base-1.0
+  vae_name: stabilityai/stable-diffusion-xl-base-1.0
   text_encoder_name: null #openclip:hf-hub:apple/DFN5B-CLIP-ViT-H-14-378
   dit_arch: MicroDiT_XL
   latents_precomputed: true
@@ -23,27 +23,27 @@ model:
 
 dataset:
   image_size: 256 # 8 * latent_res
-  train_batch_size: 1
-  eval_batch_size: 4
+  train_batch_size: 256
+  eval_batch_size: 128
   cap_drop_prob: 0.1
   train:
     _target_: micro_diffusion.datasets.latents_loader.build_streaming_latents_dataloader
     datadir:
-      - ./datadir/jdb/journeyDB/jdb_mds_latents/train
+      - ./datadir/jdb/jdb_mds_latents/train
     drop_last: true
     shuffle: true
-    prefetch_factor: 2
-    num_workers: 2
+    prefetch_factor: 4
+    num_workers: 32
     persistent_workers: true
     pin_memory: true
   eval:
     _target_: micro_diffusion.datasets.latents_loader.build_streaming_latents_dataloader
     datadir:
-      - ./datadir/jdb/journeyDB/jdb_mds_latents/valid
+      - ./datadir/jdb/jdb_mds_latents/valid
     drop_last: false
     shuffle: true
-    prefetch_factor: 2
-    num_workers: 2
+    prefetch_factor: 4
+    num_workers: 32
     persistent_workers: true
     pin_memory: true
 optimizer:
@@ -73,20 +73,24 @@ callbacks:
     _target_: composer.callbacks.OptimizerMonitor
   image_monitor:
     _target_: micro_diffusion.models.callbacks.LogDiffusionImages
-    #caption_latents_path: "./utility_clip/caption_latents.pt"
+    # provide a .pt file to load latent prompts directly from if openclip doesnt fit on VRAM with the model
+    caption_latents_path: "./utility_clip/caption_latents.pt"
     latent_prompts: null
     prompts:
-      - Nature in silhouette of an owl
-      - cyberpunk panda 
-      - majestic knight in shining armor
-      - waterfall dragon
-      - Robot in forest
-      - Shield maiden with wings
-      - a shadowy land of ghosts and specters
-      - woman with red cape long hair
-      - galaxy volcano explosion
-      - sage crystal orb
-    guidance_scale: 4
+      - Ocean wave, aesthetic, soothing, turquoise blue
+      - Funny portrait of a koala
+      - Mysterious tree surrounded by lake
+      - A heroic girl's silhouette with moon as backdrop, moon is partially covered by clouds, its evening
+      - An armed hero with cape standing near explosion, warm color scheme
+      - Malevolent wizard with his staff and hat
+      - Watercolor splash art of a butterfly, purple yellow green blue
+      - A bird on branch with moon backdrop, ominous, scary 
+      - Sunset over mountains, river of blood
+      - monster in ominous forest, lake, moon, night
+      - volcano galaxy explosion blue purple ominous
+      - Charizard using flamethrower, cinematic shot
+      - Harry Potter playing quidditch in the grounds of hogwarts castle
+    guidance_scale: 5
     sampling_steps: 30
     seed: ${seed}
   nan_catcher:

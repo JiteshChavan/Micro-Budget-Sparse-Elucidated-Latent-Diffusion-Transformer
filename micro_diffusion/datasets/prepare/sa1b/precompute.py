@@ -128,8 +128,8 @@ def main(args: ArgumentParser) -> None:
         shuffle=False,
         caption_key=syn_cap_key,  # Using llava captions in MDS dataset
         tokenizer_name=args.text_encoder,
-        prefetch_factor=8,
-        num_workers=32,
+        prefetch_factor=2,
+        num_workers=2,
         persistent_workers=True,
         pin_memory=True,
     )
@@ -171,7 +171,7 @@ def main(args: ArgumentParser) -> None:
         out=remote_upload,
         columns=columns,
         compression=None,
-        size_limit=256 * (2**20),
+        size_limit=2 * (2**30),
         max_workers=64,
     )
 

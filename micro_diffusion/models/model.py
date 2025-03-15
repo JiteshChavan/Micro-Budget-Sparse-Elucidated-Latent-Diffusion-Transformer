@@ -465,16 +465,19 @@ def create_latent_diffusion (
         in_channels=in_channels
     )
     
+    
     if vae_name is not None:
         vae = AutoencoderKL.from_pretrained (vae_name, subfolder= None if vae_name=='ostris/vae-kl-f8-d16' else 'vae', torch_dtype=DATA_TYPES[dtype], pretrained=True)
+    else:
+        vae = None
     if text_encoder_name is not None:
         tokenizer = UniversalTokenizer (text_encoder_name)
         text_encoder = UniversalTextEncoder (text_encoder_name, weights_dtype=dtype, pretrained=True)
     else:
-        vae = None
         tokenizer = None
         text_encoder = None
     
+    assert (vae is not None)
     diffusion_model = LatentDiffusion (
         dit = dit,
         vae = vae,
