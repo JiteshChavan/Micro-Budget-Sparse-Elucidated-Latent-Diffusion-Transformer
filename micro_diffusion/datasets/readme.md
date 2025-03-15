@@ -1,11 +1,11 @@
 # Downloading Datasets / Precomputing Latents for training:
 
 **Datasets:**
-**Training:**
+**Training:**  
 - [JourneyDB](https://journeydb.github.io/)
 - [SA1B](https://ai.meta.com/datasets/segment-anything/)
-- [DiffusionDB](https://github.com/poloclub/diffusiondb)
-**Validation:**
+- [DiffusionDB](https://github.com/poloclub/diffusiondb)  
+**Validation:**  
 - [COCO](https://cocodataset.org/#home)
 
 ## Dataset Pipeline Illustration:
