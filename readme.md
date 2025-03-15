@@ -112,7 +112,7 @@ Clone and install repository as follows:
     pip install .
 ```
 
-## Datasets:
+## Datasets:  
 The model was trained on JourneyDB, SA1B and DiffusionDB datasets, more info in [datasets](micro_diffusion/datasets/readme.md)
 
 ## Training:
