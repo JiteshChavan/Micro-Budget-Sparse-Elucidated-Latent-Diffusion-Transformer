@@ -100,11 +100,11 @@ class FeedForwardECMoe (nn.Module):
         self.gate = nn.Linear (n_embd, num_experts, bias=False) # bias false makes sense in case model wants to 1 hot on experts
 
         # each expert goes from n_embd to n_hidden
-        self.w1 = nn.Parameter (torch.ones (num_experts, n_embd, n_hidden))
+        self.w1 = nn.Parameter (torch.ones (num_experts, n_embd, self.n_hidden))
         # non linear activation
         self.gelu = nn.GELU()
         # each expert goes from n_hidden to n_embd
-        self.w2 = nn.Parameter (torch.ones (num_experts, n_hidden, n_embd))
+        self.w2 = nn.Parameter (torch.ones (num_experts, self.n_hidden, n_embd))
     
     def forward (self, x:torch.Tensor):
         # extract shapes
@@ -212,8 +212,7 @@ class DiTBlock (nn.Module):
         self.attn = SelfAttention (n_embd, qkv_n_hidden // head_size, qkv_bias=use_bias, n_hidden=qkv_n_hidden, norm_eps=norm_eps)
         self.ln2 = create_norm ("layernorm", dim=n_embd, eps=norm_eps)
 
-        # cross attention TODO: check if its done against time(noise) or caption embeddings
-        # TODO: cross attention (IF run on CAPTIONS has to have 0 contribution (use_bias=False) when caption set to 0 for CFG)
+        # cross attention (IF run on CAPTIONS has to have 0 contribution (use_bias=False) when caption set to 0 for CFG)
         cx_attn_n_hidden = qkv_n_hidden if scale_cx_attn_n_hidden else n_embd
         self.cx_attn = CrossAttention (n_embd=n_embd, n_head=cx_attn_n_hidden//head_size, n_hidden=cx_attn_n_hidden, norm_eps=norm_eps, qkv_bias=use_bias)
 
