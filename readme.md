@@ -38,8 +38,6 @@ Prompt: *"A cosmic mage conjuring constellations in a swirling vortex of stars"*
 ---
 ![](./assets/landscape.png)
 ---
-![](./assets/misc2.png)
----
 
 
 # Table of contents:
