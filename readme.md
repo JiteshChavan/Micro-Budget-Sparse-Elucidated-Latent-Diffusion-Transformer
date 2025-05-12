@@ -35,7 +35,9 @@ Prompt: *"In the land of mordor, where shadows lie"*
 Prompt: *"A cosmic mage conjuring constellations in a swirling vortex of stars"*
 ---
 ![](./assets/misc.png)
+---
 ![](./assets/landscape.png)
+Prompts: *"A gothic castle embroidered into the sky with golden thread", "A forest where all the trees are folded like paper cranes (origami forest)", "A thunderstorm trapped inside a crystal ball", "a samurai walking through snowfall, in Ukiyo-e woodblock style", "Mount Fuji at sunset with a mirror lake reflection", "Serene landscape with three moons", "Alien landscape, volcano explosion, field of flowers, galaxy nebulas in sky", "A whale flying through a canyon of clouds "*
 ---
 
 
