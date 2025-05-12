@@ -5,13 +5,11 @@ The model is trained for masked and unmasked denoising representation learning s
 
 # Results:
 ![](./assets/Eiffel.png)
-Prompts: *"
-###### i)Eiffel tower; Eiffel tower in {} {Starry Night style by Vincent Van Gogh; Isometric low poly style; tainted glass style;};
-
+Prompts:
+###### i)Eiffel tower; Eiffel tower in {} {Starry Night style by Vincent Van Gogh; Isometric low poly style; tainted glass style}
 ###### ii)Eiffel tower made of chocolate,
-
-###### iii)Eiffel tower under ocean"*
-
+###### iii)Eiffel tower under ocean"
+--- 
 Styles: *Pixel-art, cyberpunk, starry night*"
 ![](./assets/owl.png)
 Prompt: *"Owl with moon as backdrop in _____ style"*
@@ -19,6 +17,9 @@ Styles: *Pixel-art, cyberpunk, starry night*"
 ---
 ![](./assets/lotuspond.png)
 Prompt: *"Moonlit night over a pond of lotuses and floating candles in drawn in the style of Starry Night by Vincent Van Gogh"*
+---
+![](./assets/scenes.png)
+Prompts: *"Venice canals painted like a Van Gogh night scene", "Scenic landscape in florence", "Venice canals in water color style"*
 ---
 ![](./assets/knight.png)
 Prompt: *"concept art of a lady knight in ____ style"*
