@@ -6,9 +6,9 @@ The model is trained for masked and unmasked denoising representation learning s
 # Results:
 ![](./assets/Eiffel.png)
 Prompts:
-###### i)Eiffel tower; Eiffel tower in {} {Starry Night style by Vincent Van Gogh; Isometric low poly style; tainted glass style}
-###### ii)Eiffel tower made of chocolate,
-###### iii)Eiffel tower under ocean"
+- *Eiffel tower; Eiffel tower in {} {Starry Night style by Vincent Van Gogh; Isometric low poly style; tainted glass style}*
+- *Eiffel tower made of chocolate*
+- *Eiffel tower under ocean*
 --- 
 Styles: *Pixel-art, cyberpunk, starry night*"
 ![](./assets/owl.png)
@@ -38,9 +38,15 @@ Prompt: *"A cosmic mage conjuring constellations in a swirling vortex of stars"*
 ---
 ![](./assets/landscape.png)
 Prompts: 
-- A gothic castle embroidered into the sky with golden thread"
-- "A forest where all the trees are folded like paper cranes (origami forest)", "A thunderstorm trapped inside a crystal ball", "a samurai walking through snowfall, in Ukiyo-e woodblock style", "Mount Fuji at sunset with a mirror lake reflection", "Serene landscape with three moons", "Alien landscape, volcano explosion, field of flowers, galaxy nebulas in sky", "A whale flying through a canyon of clouds "*
----
+- A gothic castle embroidered into the sky with golden thread
+- A forest where all the trees are folded like paper cranes (origami forest)
+- A thunderstorm trapped inside a crystal ball
+- a samurai walking through snowfall, in Ukiyo-e woodblock style
+- Mount Fuji at sunset with a mirror lake reflection
+- Serene landscape with three moons
+- Alien landscape, volcano explosion, field of flowers, galaxy nebulas in sky
+- A whale flying through a canyon of clouds
+
 
 
 # Table of contents:
