@@ -6,11 +6,11 @@ The model is trained for masked and unmasked denoising representation learning s
 # Results:
 ![](./assets/Eiffel.png)
 Prompts: *"
-i)Eiffel tower; Eiffel tower in {} {Starry Night style by Vincent Van Gogh; Isometric low poly style; tainted glass style;};
+###### i)Eiffel tower; Eiffel tower in {} {Starry Night style by Vincent Van Gogh; Isometric low poly style; tainted glass style;};
 
-ii)Eiffel tower made of chocolate,
+###### ii)Eiffel tower made of chocolate,
 
-iii)Eiffel tower under ocean"*
+###### iii)Eiffel tower under ocean"*
 
 Styles: *Pixel-art, cyberpunk, starry night*"
 ![](./assets/owl.png)
