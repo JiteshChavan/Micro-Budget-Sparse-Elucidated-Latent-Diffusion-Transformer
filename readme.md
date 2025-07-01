@@ -2,6 +2,12 @@
 This repository contains the implementation resources for a **1.2B** parameters Sparse Ellucidated Latent Diffusion Transformer Model, achieving state-of-the-art image generation results, achieving an FID of 12.7 in zero-shot generation on the COCO dataset, at a significantly reduced computational cost of **$1314**.
 The model is trained for masked and unmasked denoising representation learning subject to text prompts/captions using **classifier free guidance (CFG)** to ensure that the generated image is adherent to the text prompt.
 
+# Table of contents:
+- [Generated Images](#results)
+- [Methodology](#methodology)
+- [Diffusion Transformer Architecture](#Diffusion-Transformer-Architecture)
+- [Train your own score based diffusion model](#Train-your-own-Score-Based-Diffusion-Model)
+
 
 # Results:
 ![](./assets/Eiffel.png)
@@ -49,9 +55,7 @@ Prompts:
 
 
 
-# Table of contents:
-- [Methodology](#methodology)
-- [Diffusion Transformer Architecture](#Diffusion-Transformer-Architecture)
+
 
 
 
@@ -129,6 +133,7 @@ The model utilizes *Expert Choice Mixture of Experts blocks*, with 2:8 activatio
 
 The model utilizes sinusoidal embeddings for representing current noise level $\sigma(t)$ and encoding positional information.
 
+# Train your own Score Based Diffusion Model
 ## Installation:
 Clone and install repository as follows:
 ```bash
