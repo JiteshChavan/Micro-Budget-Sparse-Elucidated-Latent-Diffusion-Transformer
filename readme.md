@@ -34,7 +34,7 @@ Prompt: *"In the land of mordor, where shadows lie"*
 ![](./assets/mage.png)
 Prompt: *"A cosmic mage conjuring constellations in a swirling vortex of stars"*
 ---
-![](./assets/misc.png)
+<!-- ![](./assets/misc.png) -->
 ---
 ![](./assets/landscape.png)
 Prompts: 

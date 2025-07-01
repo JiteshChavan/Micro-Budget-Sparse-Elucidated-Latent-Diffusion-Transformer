@@ -634,6 +634,7 @@ class DiT(nn.Module):
         # if different sigma_t for different examples
         if len(sigma_t) != 1:
             sigma_t = torch.cat ((sigma_t, sigma_t), dim=0)
+        # forward without cfg expands the sigma_t tensor across x0s either way
         
         out = self.forward_without_cfg (x, sigma_t, c, mask_ratio, **kwargs)["sample"]
         cond_out, uncond_out = out.split (len(out)//2, dim=0)

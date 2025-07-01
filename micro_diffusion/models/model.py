@@ -185,7 +185,7 @@ class LatentDiffusion (ComposerModel):
         # sigma_t shape (B, 1, 1, 1)
         c_noise = sigma_t.log() / 4 # (B, 1, 1, 1)
 
-        # cfg defaults to 1.0 implying we always do forward without cfg,
+        # model_forward_fxn is partially intialized cfg scale in edm sampler loop, doesnt need to be specified again
         # but we drop captions in training set
         out = model_forward_fxn (
             (c_in * x).to(x.dtype),
